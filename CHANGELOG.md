@@ -12,3 +12,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Implement use of iptables to block IP and/or ports
 - Add some loggers with events type info,debug,error,warn
 - Rules API to create and get rules
+- Monitore all of network interface except lo
