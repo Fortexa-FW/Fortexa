@@ -61,7 +61,3 @@ jobs:
     
     - name: Audit dependencies
       uses: actions-rust-lang/audit@v1
-    
-    - name: Check for outdated dependencies
-      run: cargo outdated -wR
-      continue-on-error: true

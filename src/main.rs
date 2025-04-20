@@ -45,7 +45,7 @@ async fn main() {
     // 6. Start firewall daemon (for logging)
     let daemon_rules = Arc::clone(&rules);
     let daemon_handle = tokio::task::spawn_blocking(move || {
-        firewall_daemon::firewall_daemon::run(daemon_rules);
+        firewall_daemon::core::run(daemon_rules);
     });
 
     // 7. Wait for tasks (they'll run indefinitely unless errors)
