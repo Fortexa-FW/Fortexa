@@ -1,15 +1,12 @@
-mod rules;
 mod api;
 mod firewall;
 mod firewall_daemon;
+mod rules;
 
+use crate::{firewall::iptables::FirewallManager, rules::FirewallRuleSet};
+use log::error; // info, error, debug, warn if needed
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use crate::{
-    rules::FirewallRuleSet,
-    firewall::iptables::FirewallManager,
-};
-use log::{error}; // info, error, debug, warn if needed
 
 const RULES_FILE: &str = "rules.json";
 

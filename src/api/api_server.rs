@@ -1,16 +1,9 @@
-use axum::{
-    extract::State,
-    routing::{get, post, delete},
-    Router, Json,
-};
+use crate::{firewall::iptables::FirewallManager, rules::FirewallRuleSet};
+use axum::{Json, Router, extract::State, routing::get};
 use std::sync::Arc;
 use std::collections::HashSet;
 use std::net::Ipv4Addr;
 use tokio::sync::Mutex;
-use crate::{
-    rules::FirewallRuleSet,
-    firewall::iptables::FirewallManager,
-};
 
 #[derive(Clone)]
 struct AppState {

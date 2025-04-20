@@ -1,7 +1,7 @@
-use serde::{Serialize, Deserialize};
-use std::net::Ipv4Addr;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs;
+use std::net::Ipv4Addr;
 use std::path::Path;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

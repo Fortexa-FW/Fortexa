@@ -1,7 +1,7 @@
+use crate::rules::{FirewallDirectionRules, FirewallRuleSet};
 use iptables::IPTables;
+use log::{debug, info}; // info, error, debug, warn if needed
 use std::net::Ipv4Addr;
-use crate::rules::{FirewallRuleSet, FirewallDirectionRules};
-use log::{info, debug}; // info, error, debug, warn if needed
 
 #[derive(Debug)]
 pub enum FirewallError {
