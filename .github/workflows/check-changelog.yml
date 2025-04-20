@@ -1,0 +1,89 @@
+name: Validate Changelog
+
+on:
+  pull_request:
+    branches: 
+      - develop
+      - feature/*
+      - bugfix/*
+      - release/*
+      - hotfix/*
+
+jobs:
+  changelog-check:
+    name: Check CHANGELOG.md
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Needed for git diff
+
+    - name: Verify CHANGELOG.md exists
+      id: check-file
+      run: |
+        if [ ! -f "CHANGELOG.md" ]; then
+          echo "::error::CHANGELOG.md file is missing"
+          exit 1
+        fi
+
+    - name: Check basic structure
+      if: steps.check-file.outcome == 'success'
+      run: |
+        # Check file starts with '# Changelog'
+        if ! head -n 1 CHANGELOG.md | grep -q '^# Changelog'; then
+          echo "::error::CHANGELOG.md should start with '# Changelog'"
+          exit 1
+        fi
+
+        # Check [Unreleased] section exists
+        if ! grep -q '^## \[Unreleased\]' CHANGELOG.md; then
+          echo "::error::CHANGELOG.md is missing the '## [Unreleased]' section"
+          exit 1
+        fi
+
+    - name: Check for meaningful Unreleased entries (feature/bugfix branches)
+      if: steps.check-file.outcome == 'success' && (startsWith(github.head_ref, 'feature/') || startsWith(github.head_ref, 'bugfix/'))
+      run: |
+        # Extract the Unreleased section content
+        UNRELEASED_SECTION=$(awk '/^## \[Unreleased\]/{flag=1; next} /^## \[[0-9]/{flag=0} flag' CHANGELOG.md)
+
+        # Check if there are any sub-sections (Added, Changed, etc.)
+        if ! echo "$UNRELEASED_SECTION" | grep -q '^### '; then
+          echo "::error::No changes documented under [Unreleased] section. Please add your changes under appropriate headings (Added, Fixed, etc.)"
+          exit 1
+        fi
+
+        # Check if there's actual content under the sub-sections
+        if ! echo "$UNRELEASED_SECTION" | grep -q '^- '; then
+          echo "::error::[Unreleased] section has headings but no list items. Please add your changes as bullet points"
+          exit 1
+        fi
+
+    - name: Check version update in release/hotfix branches
+      if: steps.check-file.outcome == 'success' && (startsWith(github.head_ref, 'release/') || startsWith(github.head_ref, 'hotfix/'))
+      run: |
+        # Get current branch name without refs/heads/
+        BRANCH_NAME=${GITHUB_HEAD_REF#refs/heads/}
+
+        # Extract version from branch name
+        VERSION=${BRANCH_NAME#release/}
+        VERSION=${VERSION#hotfix/}
+
+        if ! grep -q "^## \\[$VERSION\\]" CHANGELOG.md; then
+          echo "::error::CHANGELOG.md is missing version $VERSION section"
+          exit 1
+        fi
+
+    - name: Check if CHANGELOG.md was modified in PR
+      if: github.event_name == 'pull_request' && steps.check-file.outcome == 'success'
+      run: |
+        # Fetch the target branch
+        git fetch origin ${{ github.base_ref }}
+
+        # Get changed files
+        CHANGED_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD)
+        
+        if ! echo "$CHANGED_FILES" | grep -q "CHANGELOG.md"; then
+          echo "::warning::CHANGELOG.md was not updated. Please document your changes under the [Unreleased] section"
+        fi
