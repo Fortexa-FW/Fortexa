@@ -1,105 +1,148 @@
 use iptables::IPTables;
 use std::net::Ipv4Addr;
 use crate::rules::{FirewallRuleSet, FirewallDirectionRules};
-use log::{info, error, debug, warn};
+use log::{info, debug}; // info, error, debug, warn if needed
 
-pub struct FirewallManager;
+#[derive(Debug)]
+pub enum FirewallError {
+    IPTablesError(String),
+    ChainError(String),
+}
+
+impl std::fmt::Display for FirewallError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FirewallError::IPTablesError(e) => write!(f, "IPTables error: {}", e),
+            FirewallError::ChainError(e) => write!(f, "Chain error: {}", e),
+        }
+    }
+}
+
+pub struct FirewallManager {
+    table: String,
+    use_legacy: bool,
+}
 
 impl FirewallManager {
-    pub fn new() -> Self {
-        let _ = Self::delete_rules();
-        let ipt = iptables::new(false).unwrap();
-        
+    pub fn new(table: &str, use_legacy: bool) -> Result<Self, FirewallError> {
+        let ipt = iptables::new(use_legacy)
+            .map_err(|e| FirewallError::IPTablesError(e.to_string()))?;
+
+        // Cleanup old chains
+        let _ = Self::delete_chains(&ipt, table);
+
         // Create chains
-        ipt.new_chain("filter", "FORTEXA_INPUT").unwrap();
-        ipt.new_chain("filter", "FORTEXA_OUTPUT").unwrap();
+        ipt.new_chain(table, "FORTEXA_INPUT")
+            .map_err(|e| FirewallError::ChainError(format!("Create INPUT chain: {}", e)))?;
+        ipt.new_chain(table, "FORTEXA_OUTPUT")
+            .map_err(|e| FirewallError::ChainError(format!("Create OUTPUT chain: {}", e)))?;
 
-        // Insert chains at the start of INPUT/OUTPUT
-        ipt.insert("filter", "INPUT", "-j FORTEXA_INPUT", 1).unwrap();
-        ipt.insert("filter", "OUTPUT", "-j FORTEXA_OUTPUT", 1).unwrap();
+        // Insert chains into main chains
+        ipt.insert(table, "INPUT", "-j FORTEXA_INPUT", 1)
+            .map_err(|e| FirewallError::ChainError(format!("Insert INPUT jump: {}", e)))?;
+        ipt.insert(table, "OUTPUT", "-j FORTEXA_OUTPUT", 1)
+            .map_err(|e| FirewallError::ChainError(format!("Insert OUTPUT jump: {}", e)))?;
 
-        FirewallManager
+        Ok(Self {
+            table: table.to_string(),
+            use_legacy,
+        })
     }
 
-    pub fn sync_rules(rules: &FirewallRuleSet) -> Result<(), String> {
-        let ipt = iptables::new(false).map_err(|e| e.to_string())?;
-            
-        debug!("Syncing rules:");
+    pub fn sync_rules(&self, rules: &FirewallRuleSet) -> Result<(), FirewallError> {
+        let ipt = iptables::new(self.use_legacy)
+            .map_err(|e| FirewallError::IPTablesError(e.to_string()))?;
+
+        debug!("Syncing rules to table {}", self.table);
         debug!("Input IPs: {:?}", rules.input.blocked_ips);
         debug!("Input Ports: {:?}", rules.input.blocked_ports);
-        debug!("Output IPs: {:?}", rules.output.blocked_ips);
-        debug!("Output Ports: {:?}", rules.output.blocked_ports);
 
         // Clear existing rules
-        ipt.flush_chain("filter", "FORTEXA_INPUT").map_err(|e| e.to_string())?;
-        ipt.flush_chain("filter", "FORTEXA_OUTPUT").map_err(|e| e.to_string())?;
+        ipt.flush_chain(&self.table, "FORTEXA_INPUT")
+            .map_err(|e| FirewallError::ChainError(format!("Flush INPUT: {}", e)))?;
+        ipt.flush_chain(&self.table, "FORTEXA_OUTPUT")
+            .map_err(|e| FirewallError::ChainError(format!("Flush OUTPUT: {}", e)))?;
 
-        // INPUT rules (incoming traffic)
+        // INPUT rules
         Self::apply_rules(
             &ipt,
+            &self.table,
             "FORTEXA_INPUT",
             &rules.input,
-            |ip| format!("-s {}/32 -j DROP", ip),
-            |port| vec![
-                format!("-p tcp --dport {} -j DROP", port),
-                format!("-p udp --dport {} -j DROP", port),
+            |ip, action| format!("-s {} -j {}", ip, action),
+            |port, action| vec![
+                format!("-p tcp --dport {} -j {}", port, action),
+                format!("-p udp --dport {} -j {}", port, action),
             ],
         )?;
 
-        // OUTPUT rules (outgoing traffic)
+        // OUTPUT rules
         Self::apply_rules(
             &ipt,
+            &self.table,
             "FORTEXA_OUTPUT",
             &rules.output,
-            |ip| format!("-d {}/32 -j DROP", ip),
-            |port| vec![
-                format!("-p tcp --dport {} -j DROP", port),
-                format!("-p udp --dport {} -j DROP", port),
+            |ip, action| format!("-d {} -j {}", ip, action), // Removed /32
+            |port, action| vec![
+                format!("-p tcp --dport {} -j {}", port, action),
+                format!("-p udp --dport {} -j {}", port, action),
             ],
         )?;
 
-        // After applying rules, log full chain contents
-        let input_rules = ipt.list("filter", "FORTEXA_INPUT")
-            .map_err(|e| format!("List failed: {}", e))?;
-        info!("Current FORTEXA_INPUT rules:\n{:?}", input_rules);
+        // Log final state
+        let input_rules = ipt.list(&self.table, "FORTEXA_INPUT")
+            .map_err(|e| FirewallError::ChainError(format!("List failed: {}", e)))?;
+        debug!("Current {} FORTEXA_INPUT rules:\n{:?}", self.table, input_rules);
 
         Ok(())
     }
 
     fn apply_rules<F, G>(
         ipt: &IPTables,
+        table: &str,
         chain: &str,
         rules: &FirewallDirectionRules,
         ip_rule: F,
         port_rule: G,
-    ) -> Result<(), String>
+    ) -> Result<(), FirewallError>
     where
-        F: Fn(&Ipv4Addr) -> String,
-        G: Fn(&u16) -> Vec<String>,
+        F: Fn(&Ipv4Addr, &str) -> String,
+        G: Fn(&u16, &str) -> Vec<String>,
     {
-        // Block IPs
-        for ip in &rules.blocked_ips {
-            let rule = ip_rule(ip);
-            match ipt.append("filter", chain, &rule) {
-                Ok(_) => {
-                    info!("Applied rule to {}: {}", chain, rule);
-                }
-                Err(e) => {
-                    error!("Failed to apply rule to {} ({}): {}", chain, rule, e);
-                }
+        // Whitelisted IPs (ACCEPT)
+        for ip in &rules.whitelisted_ips {
+            let rule = ip_rule(ip, "ACCEPT");
+            ipt.append(table, chain, &rule)
+                .map_err(|e| FirewallError::ChainError(format!("Append {}: {}", rule, e)))?;
+            debug!("Whitelisted IP: {}", rule);
+        }
+
+        // Whitelisted ports (ACCEPT)
+        for port in &rules.whitelisted_ports {
+            for rule in port_rule(port, "ACCEPT") {
+                ipt.append(table, chain, &rule)
+                    .map_err(|e| FirewallError::ChainError(format!("Append {}: {}", rule, e)))?;
+                debug!("Whitelisted port: {}", rule);
             }
         }
 
-        // Block ports
+        // Blocked IPs (DROP)
+        for ip in &rules.blocked_ips {
+            if !rules.whitelisted_ips.contains(ip) {
+                let rule = ip_rule(ip, "DROP");
+                ipt.append(table, chain, &rule)
+                    .map_err(|e| FirewallError::ChainError(format!("Append {}: {}", rule, e)))?;
+                debug!("Blocked IP: {}", rule);
+            }
+        }
+
+        // Blocked ports (DROP)
         for port in &rules.blocked_ports {
-            for rule in port_rule(port) {
-                match ipt.append("filter", chain, &rule) {
-                    Ok(_) => {
-                        info!("Applied rule to {}: {}", chain, rule);
-                    }
-                    Err(e) => {
-                        error!("Failed to apply rule to {} ({}): {}", chain, rule, e);
-                    }
+            if !rules.whitelisted_ports.contains(port) {
+                for rule in port_rule(port, "DROP") {
+                    ipt.append(table, chain, &rule)
+                        .map_err(|e| FirewallError::ChainError(format!("Append {}: {}", rule, e)))?;
+                    debug!("Blocked port: {}", rule);
                 }
             }
         }
@@ -107,15 +150,28 @@ impl FirewallManager {
         Ok(())
     }
 
+    pub fn delete_rules(&self) -> Result<(), FirewallError> {
+        let ipt = iptables::new(self.use_legacy)
+            .map_err(|e| FirewallError::IPTablesError(e.to_string()))?;
 
-    pub fn delete_rules() -> Result<(), String> {
-        let ipt = iptables::new(false).map_err(|e| e.to_string())?;
-        ipt.delete("filter", "INPUT", "-j FORTEXA_INPUT").ok();
-        ipt.delete("filter", "OUTPUT", "-j FORTEXA_OUTPUT").ok();
-        ipt.flush_chain("filter", "FORTEXA_INPUT").ok();
-        ipt.flush_chain("filter", "FORTEXA_OUTPUT").ok();
-        ipt.delete_chain("filter", "FORTEXA_INPUT").ok();
-        ipt.delete_chain("filter", "FORTEXA_OUTPUT").ok();
+        ipt.delete(&self.table, "INPUT", "-j FORTEXA_INPUT").ok();
+        ipt.delete(&self.table, "OUTPUT", "-j FORTEXA_OUTPUT").ok();
+        ipt.flush_chain(&self.table, "FORTEXA_INPUT").ok();
+        ipt.flush_chain(&self.table, "FORTEXA_OUTPUT").ok();
+        ipt.delete_chain(&self.table, "FORTEXA_INPUT").ok();
+        ipt.delete_chain(&self.table, "FORTEXA_OUTPUT").ok();
+
+        info!("Cleaned up {} table rules", self.table);
+        Ok(())
+    }
+
+    fn delete_chains(ipt: &IPTables, table: &str) -> Result<(), FirewallError> {
+        ipt.delete(table, "INPUT", "-j FORTEXA_INPUT").ok();
+        ipt.delete(table, "OUTPUT", "-j FORTEXA_OUTPUT").ok();
+        ipt.flush_chain(table, "FORTEXA_INPUT").ok();
+        ipt.flush_chain(table, "FORTEXA_OUTPUT").ok();
+        ipt.delete_chain(table, "FORTEXA_INPUT").ok();
+        ipt.delete_chain(table, "FORTEXA_OUTPUT").ok();
         Ok(())
     }
 }

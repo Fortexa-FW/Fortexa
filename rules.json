@@ -6,6 +6,12 @@
     ],
     "blocked_ports": [
       22
+    ],
+    "whitelisted_ips": [
+      "192.168.1.10"
+    ],
+    "whitelisted_ports": [
+      443
     ]
   },
   "output": {
@@ -14,6 +20,8 @@
     ],
     "blocked_ports": [
       80
-    ]
+    ],
+    "whitelisted_ips": [],
+    "whitelisted_ports": []
   }
 }

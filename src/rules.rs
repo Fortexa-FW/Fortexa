@@ -6,6 +6,8 @@ use std::path::Path;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct FirewallRuleSet {
+    #[serde(default = "default_table")]
+    pub table: String,
     pub input: FirewallDirectionRules,
     pub output: FirewallDirectionRules,
 }
@@ -14,8 +16,11 @@ pub struct FirewallRuleSet {
 pub struct FirewallDirectionRules {
     pub blocked_ips: HashSet<Ipv4Addr>,
     pub blocked_ports: HashSet<u16>,
+    pub whitelisted_ips: HashSet<Ipv4Addr>,
+    pub whitelisted_ports: HashSet<u16>,
 }
 
+fn default_table() -> String { "filter".to_string() }
 
 impl FirewallRuleSet {
     pub fn load_from_file<P: AsRef<Path>>(path: P) -> Self {
