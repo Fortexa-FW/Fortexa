@@ -1,5 +1,10 @@
 use crate::{firewall::iptables::FirewallManager, rules::FirewallRuleSet};
-use axum::{Json, Router, extract::State, routing::get};
+#[allow(unused_imports)]
+use axum::{
+    Json, Router,
+    extract::State,
+    routing::{delete, get, post},
+};
 use std::collections::HashSet;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
@@ -71,6 +76,7 @@ async fn post_rules(
     Json("Rules updated and saved")
 }
 
+#[allow(dead_code)]
 async fn delete_rules(
     State(state): State<AppState>,
     Json(delete_request): Json<DeleteRulesRequest>,
