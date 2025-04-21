@@ -1,15 +1,12 @@
-mod rules;
 mod api;
 mod firewall;
 mod firewall_daemon;
+mod rules;
 
+use crate::{firewall::iptables::FirewallManager, rules::FirewallRuleSet};
+use log::error; // info, error, debug, warn if needed
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use crate::{
-    rules::FirewallRuleSet,
-    firewall::iptables::FirewallManager,
-};
-use log::{error}; // info, error, debug, warn if needed
 
 const RULES_FILE: &str = "rules.json";
 
@@ -18,21 +15,19 @@ async fn main() {
     env_logger::init();
 
     // 1. Initialize firewall manager
-    let firewall = FirewallManager::new("filter", false)
-        .unwrap_or_else(|e| {
-            error!("Failed to initialize firewall: {}", e);
-            std::process::exit(1);
-        });
+    let firewall = FirewallManager::new("filter", false).unwrap_or_else(|e| {
+        error!("Failed to initialize firewall: {}", e);
+        std::process::exit(1);
+    });
 
     // 2. Load rules from file
     let rules = FirewallRuleSet::load_from_file(RULES_FILE);
 
     // 3. Sync initial rules to kernel
-    firewall.sync_rules(&rules)
-        .unwrap_or_else(|e| {
-            error!("Failed to sync initial rules: {}", e);
-            std::process::exit(1);
-        });
+    firewall.sync_rules(&rules).unwrap_or_else(|e| {
+        error!("Failed to sync initial rules: {}", e);
+        std::process::exit(1);
+    });
 
     // 4. Prepare shared state for async tasks
     let firewall = Arc::new(Mutex::new(firewall));
@@ -48,7 +43,7 @@ async fn main() {
     // 6. Start firewall daemon (for logging)
     let daemon_rules = Arc::clone(&rules);
     let daemon_handle = tokio::task::spawn_blocking(move || {
-        firewall_daemon::firewall_daemon::run(daemon_rules);
+        firewall_daemon::core::run(daemon_rules);
     });
 
     // 7. Wait for tasks (they'll run indefinitely unless errors)
