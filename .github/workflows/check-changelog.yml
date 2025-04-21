@@ -2,7 +2,7 @@ name: Validate Changelog
 
 on:
   pull_request:
-    branches: 
+    branches:
       - develop
       - feature/*
       - bugfix/*
@@ -83,7 +83,14 @@ jobs:
 
         # Get changed files
         CHANGED_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD)
-        
+
         if ! echo "$CHANGED_FILES" | grep -q "CHANGELOG.md"; then
-          echo "::warning::CHANGELOG.md was not updated. Please document your changes under the [Unreleased] section"
+          if ! echo "${{ github.base_ref }}" | grep -q '^develop$'; then
+            # if PR from a feature branch to another feature branch, CHANGELOG check can be just a warning
+            echo "::warning::CHANGELOG.md was not updated. Please document your changes under the [Unreleased] section"
+          else
+            # if PR from a feature branch to the develop branch, CHANGELOG check is mandatory
+            echo "::error::CHANGELOG.md was not updated. Please document your changes under the [Unreleased] section"
+            exit 1
+          fi
         fi

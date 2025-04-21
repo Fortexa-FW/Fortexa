@@ -20,7 +20,9 @@ pub struct FirewallDirectionRules {
     pub whitelisted_ports: HashSet<u16>,
 }
 
-fn default_table() -> String { "filter".to_string() }
+fn default_table() -> String {
+    "filter".to_string()
+}
 
 impl FirewallRuleSet {
     pub fn load_from_file<P: AsRef<Path>>(path: P) -> Self {

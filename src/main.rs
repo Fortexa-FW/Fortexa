@@ -15,21 +15,19 @@ async fn main() {
     env_logger::init();
 
     // 1. Initialize firewall manager
-    let firewall = FirewallManager::new("filter", false)
-        .unwrap_or_else(|e| {
-            error!("Failed to initialize firewall: {}", e);
-            std::process::exit(1);
-        });
+    let firewall = FirewallManager::new("filter", false).unwrap_or_else(|e| {
+        error!("Failed to initialize firewall: {}", e);
+        std::process::exit(1);
+    });
 
     // 2. Load rules from file
     let rules = FirewallRuleSet::load_from_file(RULES_FILE);
 
     // 3. Sync initial rules to kernel
-    firewall.sync_rules(&rules)
-        .unwrap_or_else(|e| {
-            error!("Failed to sync initial rules: {}", e);
-            std::process::exit(1);
-        });
+    firewall.sync_rules(&rules).unwrap_or_else(|e| {
+        error!("Failed to sync initial rules: {}", e);
+        std::process::exit(1);
+    });
 
     // 4. Prepare shared state for async tasks
     let firewall = Arc::new(Mutex::new(firewall));

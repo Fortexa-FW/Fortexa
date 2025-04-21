@@ -25,8 +25,8 @@ pub struct FirewallManager {
 
 impl FirewallManager {
     pub fn new(table: &str, use_legacy: bool) -> Result<Self, FirewallError> {
-        let ipt = iptables::new(use_legacy)
-            .map_err(|e| FirewallError::IPTablesError(e.to_string()))?;
+        let ipt =
+            iptables::new(use_legacy).map_err(|e| FirewallError::IPTablesError(e.to_string()))?;
 
         // Cleanup old chains
         let _ = Self::delete_chains(&ipt, table);
@@ -70,10 +70,12 @@ impl FirewallManager {
             "FORTEXA_INPUT",
             &rules.input,
             |ip, action| format!("-s {} -j {}", ip, action),
-            |port, action| vec![
-                format!("-p tcp --dport {} -j {}", port, action),
-                format!("-p udp --dport {} -j {}", port, action),
-            ],
+            |port, action| {
+                vec![
+                    format!("-p tcp --dport {} -j {}", port, action),
+                    format!("-p udp --dport {} -j {}", port, action),
+                ]
+            },
         )?;
 
         // OUTPUT rules
@@ -83,16 +85,22 @@ impl FirewallManager {
             "FORTEXA_OUTPUT",
             &rules.output,
             |ip, action| format!("-d {} -j {}", ip, action), // Removed /32
-            |port, action| vec![
-                format!("-p tcp --dport {} -j {}", port, action),
-                format!("-p udp --dport {} -j {}", port, action),
-            ],
+            |port, action| {
+                vec![
+                    format!("-p tcp --dport {} -j {}", port, action),
+                    format!("-p udp --dport {} -j {}", port, action),
+                ]
+            },
         )?;
 
         // Log final state
-        let input_rules = ipt.list(&self.table, "FORTEXA_INPUT")
+        let input_rules = ipt
+            .list(&self.table, "FORTEXA_INPUT")
             .map_err(|e| FirewallError::ChainError(format!("List failed: {}", e)))?;
-        debug!("Current {} FORTEXA_INPUT rules:\n{:?}", self.table, input_rules);
+        debug!(
+            "Current {} FORTEXA_INPUT rules:\n{:?}",
+            self.table, input_rules
+        );
 
         Ok(())
     }
@@ -140,8 +148,9 @@ impl FirewallManager {
         for port in &rules.blocked_ports {
             if !rules.whitelisted_ports.contains(port) {
                 for rule in port_rule(port, "DROP") {
-                    ipt.append(table, chain, &rule)
-                        .map_err(|e| FirewallError::ChainError(format!("Append {}: {}", rule, e)))?;
+                    ipt.append(table, chain, &rule).map_err(|e| {
+                        FirewallError::ChainError(format!("Append {}: {}", rule, e))
+                    })?;
                     debug!("Blocked port: {}", rule);
                 }
             }
