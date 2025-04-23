@@ -1,7 +1,7 @@
+use ipnetwork::Ipv4Network;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs;
-use std::net::Ipv4Addr;
 use std::path::Path;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -14,9 +14,29 @@ pub struct FirewallRuleSet {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct FirewallDirectionRules {
-    pub blocked_ips: HashSet<Ipv4Addr>,
+    pub blocked_ips: HashSet<Ipv4Network>,
     pub blocked_ports: HashSet<u16>,
-    pub whitelisted_ips: HashSet<Ipv4Addr>,
+    pub whitelisted_ips: HashSet<Ipv4Network>,
+    pub whitelisted_ports: HashSet<u16>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct FirewallRuleSetUpdate {
+    #[serde(default)]
+    pub input: FirewallDirectionRulesUpdate,
+    #[serde(default)]
+    pub output: FirewallDirectionRulesUpdate,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct FirewallDirectionRulesUpdate {
+    #[serde(default)]
+    pub blocked_ips: HashSet<Ipv4Network>,
+    #[serde(default)]
+    pub blocked_ports: HashSet<u16>,
+    #[serde(default)]
+    pub whitelisted_ips: HashSet<Ipv4Network>,
+    #[serde(default)]
     pub whitelisted_ports: HashSet<u16>,
 }
 
@@ -25,11 +45,14 @@ fn default_table() -> String {
 }
 
 impl FirewallRuleSet {
-    pub fn load_from_file<P: AsRef<Path>>(path: P) -> Self {
-        fs::read_to_string(path)
-            .ok()
-            .and_then(|data| serde_json::from_str(&data).ok())
-            .unwrap_or_default()
+    pub fn load_from_file(path: &str) -> FirewallRuleSet {
+        let data = std::fs::read_to_string(path).unwrap_or_default();
+        let rules: FirewallRuleSet = serde_json::from_str(&data).unwrap_or_else(|e| {
+            log::error!("Failed to parse rules.json: {}", e);
+            FirewallRuleSet::default()
+        });
+        log::debug!("Loaded rules: {:?}", rules);
+        rules
     }
 
     pub fn save_to_file<P: AsRef<Path>>(&self, path: P) {

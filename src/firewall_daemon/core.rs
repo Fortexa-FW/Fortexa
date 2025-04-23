@@ -24,7 +24,7 @@ pub fn run(rules: Arc<Mutex<FirewallRuleSet>>) {
             monitor_interface(iface, rules, iface_name);
         });
     }
-    // Optionally: block main thread so daemon doesn't exit
+    // Block main thread so daemon doesn't exit
     loop {
         std::thread::park();
     }
@@ -45,7 +45,10 @@ fn monitor_interface(
                         let payload = ethernet.payload();
                         if let Some(ipv4) = Ipv4Packet::new(payload) {
                             // Log INPUT traffic
-                            if current_rules.input.blocked_ips.contains(&ipv4.get_source()) {
+                            if current_rules.input.blocked_ips
+                                .iter()
+                                .any(|network| network.contains(ipv4.get_source()))
+                            {
                                 debug!(
                                     "[{}][BLOCKED INPUT] From: {}",
                                     iface_name,
@@ -54,10 +57,9 @@ fn monitor_interface(
                             }
 
                             // Log OUTPUT traffic
-                            if current_rules
-                                .output
-                                .blocked_ips
-                                .contains(&ipv4.get_destination())
+                            if current_rules.output.blocked_ips
+                                .iter()
+                                .any(|network| network.contains(ipv4.get_destination()))
                             {
                                 debug!(
                                     "[{}][BLOCKED OUTPUT] To: {}",

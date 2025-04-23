@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 pnet = "0.35"
+ipnetwork = { version = "0.21", features = ["serde"] }
 iptables = "0.5"
 hyper = "1.6.0"
 axum = "0.8"

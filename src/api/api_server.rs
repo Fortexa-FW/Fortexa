@@ -1,12 +1,12 @@
 use crate::{firewall::iptables::FirewallManager, rules::FirewallRuleSet};
-#[allow(unused_imports)]
 use axum::{
     Json, Router,
     extract::State,
     routing::{delete, get, post},
 };
+use ipnetwork::Ipv4Network;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use std::net::Ipv4Addr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -16,7 +16,28 @@ struct AppState {
     rules: Arc<Mutex<FirewallRuleSet>>,
 }
 
-// DELETE Request on API
+// For full rule replacement
+#[derive(Debug, serde::Deserialize)]
+pub struct FirewallRuleSetUpdate {
+    #[serde(default)]
+    pub input: FirewallDirectionRulesUpdate,
+    #[serde(default)]
+    pub output: FirewallDirectionRulesUpdate,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct FirewallDirectionRulesUpdate {
+    #[serde(default)]
+    pub blocked_ips: HashSet<Ipv4Network>,
+    #[serde(default)]
+    pub blocked_ports: HashSet<u16>,
+    #[serde(default)]
+    pub whitelisted_ips: HashSet<Ipv4Network>,
+    #[serde(default)]
+    pub whitelisted_ports: HashSet<u16>,
+}
+
+// DELETE Request structure
 #[derive(Debug, serde::Deserialize)]
 #[allow(dead_code)]
 pub struct DeleteRulesRequest {
@@ -30,11 +51,11 @@ pub struct DeleteRulesRequest {
 #[allow(dead_code)]
 pub struct DeleteDirectionRules {
     #[serde(default)]
-    pub blocked_ips: HashSet<Ipv4Addr>,
+    pub blocked_ips: HashSet<Ipv4Network>,
     #[serde(default)]
     pub blocked_ports: HashSet<u16>,
     #[serde(default)]
-    pub whitelisted_ips: HashSet<Ipv4Addr>,
+    pub whitelisted_ips: HashSet<Ipv4Network>,
     #[serde(default)]
     pub whitelisted_ports: HashSet<u16>,
 }
@@ -45,7 +66,9 @@ pub async fn run(firewall: Arc<Mutex<FirewallManager>>, rules: Arc<Mutex<Firewal
     let state = AppState { firewall, rules };
 
     let app = Router::new()
-        .route("/rules", get(get_rules).post(post_rules))
+        .route("/rules", get(get_rules).post(replace_rules))
+        .route("/rules/append", post(append_rules))
+        .route("/rules/delete", delete(delete_rules))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
@@ -53,30 +76,55 @@ pub async fn run(firewall: Arc<Mutex<FirewallManager>>, rules: Arc<Mutex<Firewal
     axum::serve(listener, app).await.unwrap();
 }
 
+// GET handler for rules endpoint
 async fn get_rules(State(state): State<AppState>) -> Json<FirewallRuleSet> {
     let rules = state.rules.lock().await;
     Json(rules.clone())
 }
 
-async fn post_rules(
+// Full rule replacement (original behavior)
+async fn replace_rules(
     State(state): State<AppState>,
     Json(new_rules): Json<FirewallRuleSet>,
 ) -> Json<&'static str> {
-    // Update rules
     let mut current_rules = state.rules.lock().await;
     *current_rules = new_rules;
 
-    // Sync to firewall
     let firewall = state.firewall.lock().await;
-    firewall
-        .sync_rules(&current_rules)
+    firewall.sync_rules(&current_rules)
         .expect("Failed to sync firewall rules");
 
     current_rules.save_to_file(RULES_FILE);
-    Json("Rules updated and saved")
+    Json("Rules fully replaced and saved")
 }
 
-#[allow(dead_code)]
+// Append rules (partial update)
+async fn append_rules(
+    State(state): State<AppState>,
+    Json(update): Json<FirewallRuleSetUpdate>,
+) -> Json<&'static str> {
+    let mut current_rules = state.rules.lock().await;
+
+    // Merge updates into existing rules
+    current_rules.input.blocked_ips.extend(update.input.blocked_ips);
+    current_rules.input.blocked_ports.extend(update.input.blocked_ports);
+    current_rules.input.whitelisted_ips.extend(update.input.whitelisted_ips);
+    current_rules.input.whitelisted_ports.extend(update.input.whitelisted_ports);
+
+    current_rules.output.blocked_ips.extend(update.output.blocked_ips);
+    current_rules.output.blocked_ports.extend(update.output.blocked_ports);
+    current_rules.output.whitelisted_ips.extend(update.output.whitelisted_ips);
+    current_rules.output.whitelisted_ports.extend(update.output.whitelisted_ports);
+
+    let firewall = state.firewall.lock().await;
+    firewall.sync_rules(&current_rules)
+        .expect("Failed to sync firewall rules");
+
+    current_rules.save_to_file(RULES_FILE);
+    Json("Rules appended successfully")
+}
+
+// Delete rules (partial update)
 async fn delete_rules(
     State(state): State<AppState>,
     Json(delete_request): Json<DeleteRulesRequest>,

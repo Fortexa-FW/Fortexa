@@ -1,7 +1,7 @@
 use crate::rules::{FirewallDirectionRules, FirewallRuleSet};
+use ipnetwork::Ipv4Network;
 use iptables::IPTables;
 use log::{debug, info}; // info, error, debug, warn if needed
-use std::net::Ipv4Addr;
 
 #[derive(Debug)]
 pub enum FirewallError {
@@ -20,13 +20,13 @@ impl std::fmt::Display for FirewallError {
 
 pub struct FirewallManager {
     table: String,
-    use_legacy: bool,
+    use_ipv6: bool,
 }
 
 impl FirewallManager {
-    pub fn new(table: &str, use_legacy: bool) -> Result<Self, FirewallError> {
+    pub fn new(table: &str, use_ipv6: bool) -> Result<Self, FirewallError> {
         let ipt =
-            iptables::new(use_legacy).map_err(|e| FirewallError::IPTablesError(e.to_string()))?;
+            iptables::new(use_ipv6).map_err(|e| FirewallError::IPTablesError(e.to_string()))?;
 
         // Cleanup old chains
         let _ = Self::delete_chains(&ipt, table);
@@ -45,12 +45,12 @@ impl FirewallManager {
 
         Ok(Self {
             table: table.to_string(),
-            use_legacy,
+            use_ipv6,
         })
     }
 
     pub fn sync_rules(&self, rules: &FirewallRuleSet) -> Result<(), FirewallError> {
-        let ipt = iptables::new(self.use_legacy)
+        let ipt = iptables::new(self.use_ipv6)
             .map_err(|e| FirewallError::IPTablesError(e.to_string()))?;
 
         debug!("Syncing rules to table {}", self.table);
@@ -69,7 +69,7 @@ impl FirewallManager {
             &self.table,
             "FORTEXA_INPUT",
             &rules.input,
-            |ip, action| format!("-s {} -j {}", ip, action),
+            |net, action| format!("-s {} -j {}", net, action),
             |port, action| {
                 vec![
                     format!("-p tcp --dport {} -j {}", port, action),
@@ -84,7 +84,7 @@ impl FirewallManager {
             &self.table,
             "FORTEXA_OUTPUT",
             &rules.output,
-            |ip, action| format!("-d {} -j {}", ip, action), // Removed /32
+            |net, action| format!("-d {} -j {}", net, action),
             |port, action| {
                 vec![
                     format!("-p tcp --dport {} -j {}", port, action),
@@ -114,7 +114,7 @@ impl FirewallManager {
         port_rule: G,
     ) -> Result<(), FirewallError>
     where
-        F: Fn(&Ipv4Addr, &str) -> String,
+        F: Fn(&Ipv4Network, &str) -> String,
         G: Fn(&u16, &str) -> Vec<String>,
     {
         // Whitelisted IPs (ACCEPT)
@@ -161,7 +161,7 @@ impl FirewallManager {
 
     #[allow(dead_code)]
     pub fn delete_rules(&self) -> Result<(), FirewallError> {
-        let ipt = iptables::new(self.use_legacy)
+        let ipt = iptables::new(self.use_ipv6)
             .map_err(|e| FirewallError::IPTablesError(e.to_string()))?;
 
         ipt.delete(&self.table, "INPUT", "-j FORTEXA_INPUT").ok();

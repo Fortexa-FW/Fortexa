@@ -15,3 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Monitore all of network interface except lo
 - Add the possibility to whitelist IP and/or ports
 - CI (rust format + CHANGELOG checks)
+- Permit to partially update the rules
+- Add possibility to specify the netmask for the rules (eg. x.x.x.x/x)
+- Add documentation for API
+- Add new API endpoints
