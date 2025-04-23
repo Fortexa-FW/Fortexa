@@ -114,7 +114,6 @@ cargo install cargo-tarpaulin
 cargo tarpaulin
 ```
 
-
 ---
 
 ## Code Style
@@ -154,7 +153,6 @@ cargo clippy
 | `cargo clippy` | Lint the code |
 | `cargo doc --open` | Build and open documentation |
 | `cargo tarpaulin` | Run code coverage (if installed) |
-
 
 ---
 

@@ -3,7 +3,6 @@ name: Validate Changelog
 on:
   pull_request:
     branches:
-      - develop
       - feature/*
       - bugfix/*
       - release/*

@@ -1,7 +1,5 @@
 ## What does this PR do?
 
-## Related Issues
-
 ## Checklist
 - [ ] Tests added/updated
 - [ ] Documentation updated
