@@ -19,3 +19,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add possibility to specify the netmask for the rules (eg. x.x.x.x/x)
 - Add documentation for API
 - Add new API endpoints
+- Add reset endpoint to clear iptables only

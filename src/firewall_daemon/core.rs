@@ -45,7 +45,9 @@ fn monitor_interface(
                         let payload = ethernet.payload();
                         if let Some(ipv4) = Ipv4Packet::new(payload) {
                             // Log INPUT traffic
-                            if current_rules.input.blocked_ips
+                            if current_rules
+                                .input
+                                .blocked_ips
                                 .iter()
                                 .any(|network| network.contains(ipv4.get_source()))
                             {
@@ -57,7 +59,9 @@ fn monitor_interface(
                             }
 
                             // Log OUTPUT traffic
-                            if current_rules.output.blocked_ips
+                            if current_rules
+                                .output
+                                .blocked_ips
                                 .iter()
                                 .any(|network| network.contains(ipv4.get_destination()))
                             {

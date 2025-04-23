@@ -159,7 +159,6 @@ impl FirewallManager {
         Ok(())
     }
 
-    #[allow(dead_code)]
     pub fn delete_rules(&self) -> Result<(), FirewallError> {
         let ipt = iptables::new(self.use_ipv6)
             .map_err(|e| FirewallError::IPTablesError(e.to_string()))?;

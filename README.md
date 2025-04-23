@@ -189,7 +189,51 @@ curl -X DELETE http://localhost:3000/rules/delete \
 
 ---
 
-## Notes
+## 5. Resetting All Firewall Rules
+
+### Endpoint: `POST /rules/reset`
+
+**Description:**
+Removes (deletes) **all firewall rules** in both the kernel and the persisted `rules.json` file. After calling this endpoint, your firewall will be empty and allow all traffic (unless new rules are added).
+
+
+### Request
+
+```
+POST /rules/reset
+```
+
+**No body required.**
+
+
+### Response
+
+```
+"All firewall rules reset and deleted"
+```
+
+
+### Example using cURL
+
+```sh
+curl -X POST http://localhost:3000/rules/reset
+```
+
+
+**What Happens**
+
+- All chains (`FORTEXA_INPUT`, `FORTEXA_OUTPUT`) are flushed and deleted from iptables (kernel).
+- Subsequent `/rules` or `/rules/append`/`/rules/delete` POST requests can build new rules as needed.
+
+
+**Security Note for resetting**
+
+- This action removes **all protections** until new rules are added!
+- It is recommended to protect this endpoint with authentication or network restrictions in production.
+
+---
+
+## Global Notes
 
 - All modifications automatically sync firewall rules to iptables and update `rules.json`.
 - Whitelist always takes priority over blocklist (a whitelisted IP/port is never blocked).

@@ -69,6 +69,7 @@ pub async fn run(firewall: Arc<Mutex<FirewallManager>>, rules: Arc<Mutex<Firewal
         .route("/rules", get(get_rules).post(replace_rules))
         .route("/rules/append", post(append_rules))
         .route("/rules/delete", delete(delete_rules))
+        .route("/rules/reset", post(reset_iptables_rules))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
@@ -91,7 +92,8 @@ async fn replace_rules(
     *current_rules = new_rules;
 
     let firewall = state.firewall.lock().await;
-    firewall.sync_rules(&current_rules)
+    firewall
+        .sync_rules(&current_rules)
         .expect("Failed to sync firewall rules");
 
     current_rules.save_to_file(RULES_FILE);
@@ -106,18 +108,43 @@ async fn append_rules(
     let mut current_rules = state.rules.lock().await;
 
     // Merge updates into existing rules
-    current_rules.input.blocked_ips.extend(update.input.blocked_ips);
-    current_rules.input.blocked_ports.extend(update.input.blocked_ports);
-    current_rules.input.whitelisted_ips.extend(update.input.whitelisted_ips);
-    current_rules.input.whitelisted_ports.extend(update.input.whitelisted_ports);
+    current_rules
+        .input
+        .blocked_ips
+        .extend(update.input.blocked_ips);
+    current_rules
+        .input
+        .blocked_ports
+        .extend(update.input.blocked_ports);
+    current_rules
+        .input
+        .whitelisted_ips
+        .extend(update.input.whitelisted_ips);
+    current_rules
+        .input
+        .whitelisted_ports
+        .extend(update.input.whitelisted_ports);
 
-    current_rules.output.blocked_ips.extend(update.output.blocked_ips);
-    current_rules.output.blocked_ports.extend(update.output.blocked_ports);
-    current_rules.output.whitelisted_ips.extend(update.output.whitelisted_ips);
-    current_rules.output.whitelisted_ports.extend(update.output.whitelisted_ports);
+    current_rules
+        .output
+        .blocked_ips
+        .extend(update.output.blocked_ips);
+    current_rules
+        .output
+        .blocked_ports
+        .extend(update.output.blocked_ports);
+    current_rules
+        .output
+        .whitelisted_ips
+        .extend(update.output.whitelisted_ips);
+    current_rules
+        .output
+        .whitelisted_ports
+        .extend(update.output.whitelisted_ports);
 
     let firewall = state.firewall.lock().await;
-    firewall.sync_rules(&current_rules)
+    firewall
+        .sync_rules(&current_rules)
         .expect("Failed to sync firewall rules");
 
     current_rules.save_to_file(RULES_FILE);
@@ -176,4 +203,10 @@ async fn delete_rules(
     current_rules.save_to_file(RULES_FILE);
 
     Json("Specified rules deleted successfully")
+}
+
+async fn reset_iptables_rules(State(state): State<AppState>) -> Json<&'static str> {
+    let firewall = state.firewall.lock().await;
+    firewall.delete_rules().expect("Failed to delete all rules");
+    Json("All firewall rules deleted")
 }
