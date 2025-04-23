@@ -20,3 +20,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add documentation for API
 - Add new API endpoints
 - Add reset endpoint to clear iptables only
+- New templates for issues (bug_report, documentation, enhancement, features)
+- New DEVELOPMENT.md file for guidelines
+- Pull request templates
