@@ -1,85 +1,130 @@
 use axum::{
-    body::Body,
+    body::{Body, to_bytes},
     http::{Request, StatusCode},
 };
-use tower::ServiceExt;
 use fortexa::{
     api::api_server::router,
-    firewall::iptables::{FirewallManager, IPTablesInterface, MockIPTablesInterface},
-    rules::FirewallRuleSet
+    firewall::iptables::{FirewallManager, IPTablesInterface, IPTablesWrapper},
+    rules::FirewallRuleSet,
 };
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use tower::ServiceExt;
 
-// Helper to create mock firewall manager
-fn create_mock_firewall() -> Arc<Mutex<FirewallManager<MockIPTablesInterface>>> {
-    let mut mock_ipt = MockIPTablesInterface::new(false);
-    
-    // Mock expectations for basic initialization
-    mock_ipt.expect_new_chain()
-        .returning(|_, _| Ok(()));
-    mock_ipt.expect_insert()
-        .returning(|_, _, _, _| Ok(()));
-    
-    Arc::new(Mutex::new(
-        FirewallManager::new("filter", false, mock_ipt).unwrap()
-    ))
+struct TestEnvironment {
+    _chain: TestChain,
+    firewall: Arc<Mutex<FirewallManager<IPTablesWrapper>>>,
+    rules: Arc<Mutex<FirewallRuleSet>>,
+}
+
+impl TestEnvironment {
+    async fn new(table: &str, chain: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        let test_chain = TestChain::new(table, chain)?;
+        let ipt = IPTablesWrapper::new(false)?;
+        let firewall = Arc::new(Mutex::new(
+            FirewallManager::new(table, false, ipt)?.chain(chain)?,
+        ));
+        let rules = Arc::new(Mutex::new(FirewallRuleSet::default()));
+
+        Ok(Self {
+            _chain: test_chain,
+            firewall,
+            rules,
+        })
+    }
+
+    async fn app(&self) -> axum::Router {
+        router(self.firewall.clone(), self.rules.clone())
+    }
 }
 
 #[tokio::test]
-async fn test_get_rules_empty() {
-    let firewall = create_mock_firewall();
-    let rules = Arc::new(Mutex::new(FirewallRuleSet::default()));
-    
-    let app = router(firewall, rules.clone());
+#[ignore = "requires iptables access and root privileges"]
+async fn test_get_rules_empty() -> Result<(), Box<dyn std::error::Error>> {
+    let env = TestEnvironment::new("filter", "fortexa_api_empty_test").await?;
 
-    let response = app
-        .oneshot(Request::builder().uri("/rules").body(Body::empty()).unwrap())
+    let response = env
+        .app()
         .await
-        .unwrap();
+        .oneshot(Request::builder().uri("/rules").body(Body::empty())?)
+        .await?;
 
     assert_eq!(response.status(), StatusCode::OK);
+
+    // Verify actual firewall state
+    let firewall = env.firewall.lock().await;
+    let current_rules = firewall.list_rules()?;
+    assert!(current_rules.is_empty(), "Firewall should have no rules");
+
+    Ok(())
 }
 
-#[tokio::test] 
-async fn test_append_rules() {
-    let firewall = create_mock_firewall();
-    let rules = Arc::new(Mutex::new(FirewallRuleSet::default()));
-    let app = router(firewall, rules.clone());
+#[tokio::test]
+#[ignore = "requires iptables access and root privileges"]
+async fn test_append_rules() -> Result<(), Box<dyn std::error::Error>> {
+    let env = TestEnvironment::new("filter", "fortexa_api_append_test").await?;
 
-    let response = app
+    let response = env
+        .app()
+        .await
         .oneshot(
             Request::builder()
                 .method("POST")
                 .uri("/rules/append")
                 .header("Content-Type", "application/json")
-                .body(Body::from(r#"{ "input": { "blocked_ips": ["192.168.1.100/32"] } }"#))
-                .unwrap(),
+                .body(Body::from(
+                    r#"{ "input": { "blocked_ips": ["192.168.1.100/32"] } }"#,
+                ))?,
         )
-        .await
-        .unwrap();
+        .await?;
 
     assert_eq!(response.status(), StatusCode::OK);
-    
-    // Verify rules were updated
-    let locked_rules = rules.lock().await;
+
+    // Verify in-memory rules
+    let locked_rules = env.rules.lock().await;
     assert_eq!(locked_rules.input.blocked_ips.len(), 1);
+
+    // Verify actual firewall rules
+    let firewall = env.firewall.lock().await;
+    let current_rules = firewall.list_rules()?;
+    assert!(
+        current_rules.iter().any(|r| r.contains("192.168.1.100/32")),
+        "Firewall should contain block rule"
+    );
+
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_get_rules() {
-    let firewall = create_mock_firewall();
+#[ignore = "requires iptables access and root privileges"]
+async fn test_get_rules() -> Result<(), Box<dyn std::error::Error>> {
+    let env = TestEnvironment::new("filter", "fortexa_api_get_test").await?;
+
+    // Set initial rules
     let mut initial_rules = FirewallRuleSet::default();
-    initial_rules.input.blocked_ips.insert("10.0.0.0/24".parse().unwrap());
-    let rules = Arc::new(Mutex::new(initial_rules));
+    initial_rules
+        .input
+        .blocked_ips
+        .insert("10.0.0.0/24".parse()?);
+    *env.rules.lock().await = initial_rules.clone();
 
-    let app = router(firewall, rules.clone());
-
-    let response = app
-        .oneshot(Request::builder().uri("/rules").body(Body::empty()).unwrap())
+    let response = env
+        .app()
         .await
-        .unwrap();
+        .oneshot(Request::builder().uri("/rules").body(Body::empty())?)
+        .await?;
 
     assert_eq!(response.status(), StatusCode::OK);
-    
+
+    // Verify response body contains the rules
+    let body = to_bytes(response.into_body()).await?;
+    let response_rules: FirewallRuleSet = serde_json::from_slice(&body)?;
+    assert_eq!(
+        response_rules.input.blocked_ips,
+        initial_rules.input.blocked_ips
+    );
+
+    Ok(())
 }
+
+// Reuse TestChain implementation from previous examples

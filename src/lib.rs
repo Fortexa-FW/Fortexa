@@ -3,7 +3,12 @@ pub mod firewall;
 pub mod firewall_daemon;
 pub mod rules;
 
-use crate::{firewall::iptables::{FirewallError, FirewallManager, IPTablesInterface, IPTablesWrapper},rules::FirewallRuleSet};
+use crate::{
+    firewall::error::FirewallError,
+    firewall::iptables::{IPTablesInterface, IPTablesWrapper},
+    firewall::manager::FirewallManager,
+    rules::FirewallRuleSet,
+};
 use log::error; // info, error, debug, warn if needed
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -13,8 +18,8 @@ pub const RULES_FILE: &str = "rules.json";
 pub async fn run() -> Result<(), FirewallError> {
     env_logger::init();
 
-    let ipt = IPTablesWrapper::new(false)  
-        .map_err(|e| FirewallError::ChainError(format!("Wrapper init: {}", e)))?; 
+    let ipt = IPTablesWrapper::new(false)
+        .map_err(|e| FirewallError::ChainError(format!("Wrapper init: {}", e)))?;
 
     // 1. Initialize firewall manager
     let firewall = FirewallManager::new("filter", false, ipt).unwrap_or_else(|e| {
@@ -32,17 +37,14 @@ pub async fn run() -> Result<(), FirewallError> {
     });
 
     // 4. Prepare shared state for async tasks
-    let firewall = Arc::new(tokio::sync::Mutex::new(firewall));  
+    let firewall = Arc::new(tokio::sync::Mutex::new(firewall));
     let rules = Arc::new(Mutex::new(rules));
 
     // 5. Start API server
     let api_firewall = Arc::clone(&firewall);
     let api_rules = Arc::clone(&rules);
 
-    let api_router = api::api_server::router(
-        api_firewall,
-        api_rules
-    );
+    let api_router = api::api_server::router(api_firewall, api_rules);
 
     let api_handle = tokio::spawn(async move {
         api::api_server::run(api_router).await;
