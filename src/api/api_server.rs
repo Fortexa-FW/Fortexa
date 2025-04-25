@@ -1,4 +1,4 @@
-use crate::{firewall::iptables::FirewallManager,firewall::iptables::IPTablesInterface, firewall::iptables, rules::FirewallRuleSet };
+use crate::{firewall::manager::FirewallManager,firewall::iptables::IPTablesInterface, firewall::iptables, rules::FirewallRuleSet };
 use axum::{
     Json, Router,
     extract::State,
@@ -74,12 +74,12 @@ const RULES_FILE: &str = "rules.json";
 pub fn router(firewall: Arc<Mutex<FirewallManager>>, rules: Arc<Mutex<FirewallRuleSet>>) -> Router {
     let state = AppState { firewall, rules };
 
-    return Router::new()
+    Router::new()
         .route("/rules", get(get_rules).post(replace_rules))
         .route("/rules/append", post(append_rules))
         .route("/rules/delete", delete(delete_rules))
         .route("/rules/reset", post(reset_iptables_rules))
-        .with_state(state);
+        .with_state(state)
 }
 
 pub async fn run(router: Router) {
