@@ -1,19 +1,28 @@
-use crate::{firewall::iptables::FirewallManager, rules::FirewallRuleSet};
+use crate::{firewall::iptables::FirewallManager,firewall::iptables::IPTablesInterface, firewall::iptables, rules::FirewallRuleSet };
 use axum::{
     Json, Router,
     extract::State,
     routing::{delete, get, post},
 };
 use ipnetwork::Ipv4Network;
+use log::debug;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-#[derive(Clone)]
-struct AppState {
-    firewall: Arc<Mutex<FirewallManager>>,
+pub struct AppState<T: IPTablesInterface> {
+    firewall: Arc<Mutex<FirewallManager<T>>>,
     rules: Arc<Mutex<FirewallRuleSet>>,
+}
+
+impl<T: IPTablesInterface> Clone for AppState<T> {
+    fn clone(&self) -> Self {
+        Self {
+            firewall: self.firewall.clone(),
+            rules: self.rules.clone(),
+        }
+    }
 }
 
 // For full rule replacement
@@ -62,30 +71,32 @@ pub struct DeleteDirectionRules {
 
 const RULES_FILE: &str = "rules.json";
 
-pub async fn run(firewall: Arc<Mutex<FirewallManager>>, rules: Arc<Mutex<FirewallRuleSet>>) {
+pub fn router(firewall: Arc<Mutex<FirewallManager>>, rules: Arc<Mutex<FirewallRuleSet>>) -> Router {
     let state = AppState { firewall, rules };
 
-    let app = Router::new()
+    return Router::new()
         .route("/rules", get(get_rules).post(replace_rules))
         .route("/rules/append", post(append_rules))
         .route("/rules/delete", delete(delete_rules))
         .route("/rules/reset", post(reset_iptables_rules))
         .with_state(state);
+}
 
+pub async fn run(router: Router) {
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
-    println!("API server listening on 0.0.0.0:3000");
-    axum::serve(listener, app).await.unwrap();
+    axum::serve(listener, router).await.unwrap();
+    debug!("API server listening on 0.0.0.0:3000");
 }
 
 // GET handler for rules endpoint
-async fn get_rules(State(state): State<AppState>) -> Json<FirewallRuleSet> {
+async fn get_rules<T: iptables::IPTablesInterface>(State(state): State<AppState<T>>) -> Json<FirewallRuleSet> {
     let rules = state.rules.lock().await;
     Json(rules.clone())
 }
 
 // Full rule replacement (original behavior)
-async fn replace_rules(
-    State(state): State<AppState>,
+async fn replace_rules<T: iptables::IPTablesInterface>(
+    State(state): State<AppState<T>>,
     Json(new_rules): Json<FirewallRuleSet>,
 ) -> Json<&'static str> {
     let mut current_rules = state.rules.lock().await;
@@ -101,8 +112,8 @@ async fn replace_rules(
 }
 
 // Append rules (partial update)
-async fn append_rules(
-    State(state): State<AppState>,
+async fn append_rules<T: iptables::IPTablesInterface>(
+    State(state): State<AppState<T>>,
     Json(update): Json<FirewallRuleSetUpdate>,
 ) -> Json<&'static str> {
     let mut current_rules = state.rules.lock().await;
@@ -152,8 +163,8 @@ async fn append_rules(
 }
 
 // Delete rules (partial update)
-async fn delete_rules(
-    State(state): State<AppState>,
+async fn delete_rules<T: iptables::IPTablesInterface>(
+    State(state): State<AppState<T>>,
     Json(delete_request): Json<DeleteRulesRequest>,
 ) -> Json<&'static str> {
     let mut current_rules = state.rules.lock().await;
@@ -205,7 +216,7 @@ async fn delete_rules(
     Json("Specified rules deleted successfully")
 }
 
-async fn reset_iptables_rules(State(state): State<AppState>) -> Json<&'static str> {
+async fn reset_iptables_rules<T: iptables::IPTablesInterface>(State(state): State<AppState<T>>) -> Json<&'static str> {
     let firewall = state.firewall.lock().await;
     firewall.delete_rules().expect("Failed to delete all rules");
     Json("All firewall rules deleted")
