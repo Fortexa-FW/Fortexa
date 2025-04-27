@@ -1,7 +1,7 @@
 use iptables::IPTables;
 use std::sync::Arc;
 
-pub trait IPTablesInterface {
+pub trait IPTablesInterface: Send + Sync {
     fn new(use_ipv6: bool) -> Result<Self, String>
     where
         Self: Sized;

@@ -1,4 +1,4 @@
-use crate::rules::FirewallRuleSet;
+use crate::firewall::iptables::rules::IPTablesRuleSet;
 use log::{debug, error, info, warn};
 use pnet::datalink::{self, Channel::Ethernet, NetworkInterface};
 use pnet::packet::{
@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::thread;
 use tokio::sync::Mutex;
 
-pub fn run(rules: Arc<Mutex<FirewallRuleSet>>) {
+pub fn run(rules: Arc<Mutex<IPTablesRuleSet>>) {
     let interfaces = datalink::interfaces()
         .into_iter()
         .filter(|iface| !iface.is_loopback() && iface.is_up())
@@ -32,7 +32,7 @@ pub fn run(rules: Arc<Mutex<FirewallRuleSet>>) {
 
 fn monitor_interface(
     interface: NetworkInterface,
-    rules: Arc<Mutex<FirewallRuleSet>>,
+    rules: Arc<Mutex<IPTablesRuleSet>>,
     iface_name: String,
 ) {
     match datalink::channel(&interface, Default::default()) {

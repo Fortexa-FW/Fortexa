@@ -1,12 +1,12 @@
 use crate::{
     firewall::error::FirewallError,
-    firewall::iptables::{IPTablesInterface, IPTablesWrapper},
-    rules::{FirewallDirectionRules, FirewallRuleSet},
+    firewall::iptables::iptables::{IPTablesInterface, IPTablesWrapper},
+    firewall::iptables::rules::{IPTablesDirectionRules, IPTablesRuleSet},
 };
 use ipnetwork::Ipv4Network;
 use log::debug; // info, error, debug, warn if needed
 
-pub struct FirewallManager<T: IPTablesInterface = IPTablesWrapper> {
+pub struct IPTablesManager<T: IPTablesInterface = IPTablesWrapper> {
     table: String,
     use_ipv6: bool,
     ipt: T,
@@ -14,7 +14,7 @@ pub struct FirewallManager<T: IPTablesInterface = IPTablesWrapper> {
     output_chain: String,
 }
 
-impl<T: IPTablesInterface> FirewallManager<T> {
+impl<T: IPTablesInterface> IPTablesManager<T> {
     pub fn new(table: &str, use_ipv6: bool, ipt: T) -> Result<Self, FirewallError> {
         let base_chain = "FORTEXA"; // Default base name
         let input_chain = format!("{}_INPUT", base_chain);
@@ -78,7 +78,7 @@ impl<T: IPTablesInterface> FirewallManager<T> {
         Ok(self)
     }
 
-    pub fn sync_rules(&self, rules: &FirewallRuleSet) -> Result<(), FirewallError> {
+    pub fn sync_rules(&self, rules: &IPTablesRuleSet) -> Result<(), FirewallError> {
         debug!(
             "Syncing rules to table {} (IPv6: {})",
             self.table, self.use_ipv6
@@ -153,7 +153,7 @@ impl<T: IPTablesInterface> FirewallManager<T> {
     fn add_rules_to_batch<F, G>(
         batch: &mut Vec<String>,
         chain: &str,
-        rules: &FirewallDirectionRules,
+        rules: &IPTablesDirectionRules,
         ip_rule: F,
         port_rule: G,
     ) where
@@ -253,8 +253,8 @@ mod tests {
             })
         }
 
-        fn create_manager(&self) -> Result<FirewallManager<IPTablesWrapper>, FirewallError> {
-            FirewallManager::new(&self.table, false, self.ipt.clone())
+        fn create_manager(&self) -> Result<IPTablesManager<IPTablesWrapper>, FirewallError> {
+            IPTablesManager::new(&self.table, false, self.ipt.clone())
                 .and_then(|m| m.chain(&self.chain))
         }
     }
@@ -290,7 +290,7 @@ mod tests {
         let env = TestEnvironment::new(table, chain)?;
         let manager = env.create_manager()?;
 
-        let mut rules = FirewallRuleSet::default();
+        let mut rules = IPTablesRuleSet::default();
         rules.input.whitelisted_ips.insert("10.0.0.5/32".parse()?);
         rules.input.blocked_ips.insert("192.168.1.100/32".parse()?);
 
@@ -319,7 +319,7 @@ mod tests {
         let manager = env.create_manager()?;
 
         // Add some rules
-        let mut rules = FirewallRuleSet::default();
+        let mut rules = IPTablesRuleSet::default();
         rules.input.blocked_ips.insert("192.168.1.100/32".parse()?);
         manager.sync_rules(&rules)?;
 
@@ -364,7 +364,7 @@ mod tests {
         let env = TestEnvironment::new(table, chain)?;
         let manager = env.create_manager()?;
 
-        let mut rules = FirewallRuleSet::default();
+        let mut rules = IPTablesRuleSet::default();
         rules.input.whitelisted_ports.insert(443);
         rules.input.blocked_ports.insert(22);
 

@@ -25,6 +25,7 @@ log = "0.4"
 env_logger = "0.11"
 tempfile = "3.19"
 mockall = "0.13"
+once_cell = "1.21"
 
 [dev-dependencies]
 mockall = "0.13"

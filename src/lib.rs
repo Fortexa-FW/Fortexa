@@ -1,34 +1,36 @@
 pub mod api;
 pub mod firewall;
 pub mod firewall_daemon;
-pub mod rules;
 
 use crate::{
     firewall::error::FirewallError,
-    firewall::iptables::{IPTablesInterface, IPTablesWrapper},
-    firewall::manager::FirewallManager,
-    rules::FirewallRuleSet,
+    firewall::iptables::{iptables::IPTablesInterface},
+    firewall::core::FirewallManager,
+    firewall::rules_core::RulesManager,
 };
 use log::error; // info, error, debug, warn if needed
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-pub const RULES_FILE: &str = "rules.json";
+pub static RULES_FILE: &str = match option_env!("RULES_FILE") {
+    Some(path) => path,
+    None => "rules.json",
+};
 
 pub async fn run() -> Result<(), FirewallError> {
     env_logger::init();
 
-    let ipt = IPTablesWrapper::new(false)
-        .map_err(|e| FirewallError::ChainError(format!("Wrapper init: {}", e)))?;
-
     // 1. Initialize firewall manager
-    let firewall = FirewallManager::new("filter", false, ipt).unwrap_or_else(|e| {
+    let mut firewall = FirewallManager::new().unwrap_or_else(|e| {
         error!("Failed to initialize firewall: {}", e);
         std::process::exit(1);
     });
 
     // 2. Load rules from file
-    let rules = FirewallRuleSet::load_from_file(RULES_FILE);
+    let rules = RulesManager::new().unwrap_or_else(|e| {
+        error!("Failed to initialize firewall rules manager: {}", e);
+        std::process::exit(1);
+    });
 
     // 3. Sync initial rules to kernel
     firewall.sync_rules(&rules).unwrap_or_else(|e| {

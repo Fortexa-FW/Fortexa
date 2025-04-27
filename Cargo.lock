@@ -254,6 +254,7 @@ dependencies = [
  "iptables",
  "log",
  "mockall",
+ "once_cell",
  "pnet",
  "serde",
  "serde_json",
