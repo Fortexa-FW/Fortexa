@@ -54,9 +54,12 @@ impl IPTablesRuleSet {
         rules
     }
 
-    pub fn save_to_file(&self, path: &str) -> Result<(), std::io::Error> {
-        let json = serde_json::to_string_pretty(self)?;
-        fs::write(path, json)?;
-        Ok(())
+    pub fn save_to_file(&self, path: &str) {
+        if let Err(e) = serde_json::to_string_pretty(self)
+            .map_err(|e| e.to_string())
+            .and_then(|json| fs::write(path, json).map_err(|e| e.to_string()))
+        {
+            log::error!("Failed to save rules to file {}: {}", path, e);
+        }
     }
 }

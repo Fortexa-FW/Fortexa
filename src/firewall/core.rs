@@ -1,14 +1,10 @@
-use crate::{
-    firewall::{
-        error::FirewallError,
-        iptables::iptables_manager::IPTablesManager,
-        iptables::iptables::IPTablesInterface,
-        iptables::iptables::IPTablesWrapper,
-        iptables::rules::IPTablesRuleSet,
-    },
+use crate::firewall::{
+    error::FirewallError, iptables::iptables_impl::IPTablesInterface,
+    iptables::iptables_impl::IPTablesWrapper, iptables::iptables_manager::IPTablesManager,
+    rules_core::RulesManager,
 };
-use std::env;
 use once_cell::sync::Lazy;
+use std::env;
 
 pub struct FirewallManager {
     iptables_mgr: IPTablesManager<IPTablesWrapper>,
@@ -19,27 +15,22 @@ pub static IPTABLES_TABLE: &str = match option_env!("IPTABLES_TABLE") {
     None => "filter",
 };
 
-pub static USE_IPV6: Lazy<bool> = Lazy::new(|| {
-    matches!(
-        env::var("USE_IPV6").as_deref(),
-        Ok("true") | Ok("1")
-    )
-});
+pub static USE_IPV6: Lazy<bool> =
+    Lazy::new(|| matches!(env::var("USE_IPV6").as_deref(), Ok("true") | Ok("1")));
 
 impl FirewallManager {
     pub fn new() -> Result<Self, FirewallError> {
         let ipt = IPTablesWrapper::new(*USE_IPV6)
             .map_err(|e| FirewallError::ChainError(format!("Wrapper init: {}", e)))?;
 
-        let iptables_mgr = Self::create_iptables_manager(IPTABLES_TABLE, *USE_IPV6, ipt);
-        
-        Ok(Self {
-            iptables_mgr
-        })
+        let iptables_mgr = Self::create_iptables_manager(IPTABLES_TABLE, *USE_IPV6, ipt)
+            .map_err(|e| FirewallError::ChainError(format!("Manager init: {}", e)))?;
+
+        Ok(Self { iptables_mgr })
     }
 
-    pub fn sync_rules(&mut self, rules: &IPTablesRuleSet) -> Result<(), FirewallError> {
-        self.iptables_mgr.sync_rules(rules)?;
+    pub fn sync_rules(&mut self, rules: &RulesManager) -> Result<(), FirewallError> {
+        self.iptables_mgr.sync_rules(rules.get_iptables_rules())?;
         Ok(())
     }
 
@@ -50,9 +41,8 @@ impl FirewallManager {
     pub fn create_iptables_manager(
         table: &str,
         use_ipv6: bool,
-        ipt: IPTablesWrapper
-    ) -> &IPTablesManager<IPTablesWrapper> {
+        ipt: IPTablesWrapper,
+    ) -> Result<IPTablesManager<IPTablesWrapper>, FirewallError> {
         IPTablesManager::new(table, use_ipv6, ipt)
     }
-
 }

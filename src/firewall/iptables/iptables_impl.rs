@@ -73,8 +73,9 @@ impl IPTablesInterface for IPTablesWrapper {
 
 #[cfg(test)]
 mod tests {
+    use crate::firewall::{FirewallError, IPTablesManager, iptables::rules::IPTablesRuleSet};
+
     use super::*;
-    use std::str::FromStr;
 
     struct TestEnvironment {
         table: String,
@@ -95,8 +96,8 @@ mod tests {
             })
         }
 
-        fn create_manager(&self) -> Result<FirewallManager<IPTablesWrapper>, FirewallError> {
-            FirewallManager::new(&self.table, false, self.ipt.clone())
+        fn create_manager(&self) -> Result<IPTablesManager<IPTablesWrapper>, FirewallError> {
+            IPTablesManager::new(&self.table, false, self.ipt.clone())
                 .and_then(|m| m.chain(&self.chain))
         }
     }
@@ -115,7 +116,7 @@ mod tests {
         let chain = "fortexa_init_test";
         let env = TestEnvironment::new(table, chain)?;
 
-        let manager = env.create_manager()?;
+        let _manager = env.create_manager()?; //FIXME: Handle error properly
 
         // Verify chains exist
         let chains = env.ipt.list(table, "")?;
@@ -132,7 +133,7 @@ mod tests {
         let env = TestEnvironment::new(table, chain)?;
         let manager = env.create_manager()?;
 
-        let mut rules = FirewallRuleSet::default();
+        let mut rules = IPTablesRuleSet::default();
         rules.input.whitelisted_ips.insert("10.0.0.5/32".parse()?);
         rules.input.blocked_ips.insert("192.168.1.100/32".parse()?);
 
@@ -161,7 +162,7 @@ mod tests {
         let manager = env.create_manager()?;
 
         // Add some rules
-        let mut rules = FirewallRuleSet::default();
+        let mut rules = IPTablesRuleSet::default();
         rules.input.blocked_ips.insert("192.168.1.100/32".parse()?);
         manager.sync_rules(&rules)?;
 
@@ -206,7 +207,7 @@ mod tests {
         let env = TestEnvironment::new(table, chain)?;
         let manager = env.create_manager()?;
 
-        let mut rules = FirewallRuleSet::default();
+        let mut rules = IPTablesRuleSet::default();
         rules.input.whitelisted_ports.insert(443);
         rules.input.blocked_ports.insert(22);
 

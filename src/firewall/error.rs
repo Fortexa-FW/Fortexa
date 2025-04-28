@@ -4,6 +4,7 @@ use std::fmt;
 pub enum FirewallError {
     IPTablesError(String),
     ChainError(String),
+    LoadError(String),
 }
 
 impl fmt::Display for FirewallError {
@@ -11,6 +12,7 @@ impl fmt::Display for FirewallError {
         match self {
             FirewallError::IPTablesError(e) => write!(f, "IPTables error: {}", e),
             FirewallError::ChainError(e) => write!(f, "Chain error: {}", e),
+            FirewallError::LoadError(e) => write!(f, "{}", e),
         }
     }
 }

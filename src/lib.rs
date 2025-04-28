@@ -3,11 +3,10 @@ pub mod firewall;
 pub mod firewall_daemon;
 
 use crate::{
-    firewall::error::FirewallError,
-    firewall::iptables::{iptables::IPTablesInterface},
-    firewall::core::FirewallManager,
-    firewall::rules_core::RulesManager,
+    firewall::core::FirewallManager, firewall::error::FirewallError,
+    firewall::iptables::iptables_impl::IPTablesInterface, firewall::rules_core::RulesManager,
 };
+use firewall::IPTablesWrapper;
 use log::error; // info, error, debug, warn if needed
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -49,14 +48,19 @@ pub async fn run() -> Result<(), FirewallError> {
     let api_router = api::api_server::router(api_firewall, api_rules);
 
     let api_handle = tokio::spawn(async move {
-        api::api_server::run(api_router).await;
+        api::api_server::run::<IPTablesWrapper>(api_router.await)
+            .await
+            .unwrap_or_else(|e| {
+                error!("Failed to run API server: {}", e);
+                std::process::exit(1);
+            });
     });
 
     // 6. Start firewall daemon (for logging)
     let daemon_handle = {
         let rules = Arc::clone(&rules);
-        tokio::task::spawn_blocking(move || {
-            firewall_daemon::core::run(rules);
+        tokio::spawn(async move {
+            firewall_daemon::core::FirewallDaemon::new(rules).await;
         })
     };
 

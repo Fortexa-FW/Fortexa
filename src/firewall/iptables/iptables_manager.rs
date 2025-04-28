@@ -1,11 +1,12 @@
 use crate::{
     firewall::error::FirewallError,
-    firewall::iptables::iptables::{IPTablesInterface, IPTablesWrapper},
+    firewall::iptables::iptables_impl::{IPTablesInterface, IPTablesWrapper},
     firewall::iptables::rules::{IPTablesDirectionRules, IPTablesRuleSet},
 };
 use ipnetwork::Ipv4Network;
 use log::debug; // info, error, debug, warn if needed
 
+#[derive(Clone)]
 pub struct IPTablesManager<T: IPTablesInterface = IPTablesWrapper> {
     table: String,
     use_ipv6: bool,
@@ -232,7 +233,6 @@ impl<T: IPTablesInterface> IPTablesManager<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::str::FromStr;
 
     struct TestEnvironment {
         table: String,
@@ -272,8 +272,6 @@ mod tests {
         let table = "filter";
         let chain = "fortexa_init_test";
         let env = TestEnvironment::new(table, chain)?;
-
-        let manager = env.create_manager()?;
 
         // Verify chains exist
         let chains = env.ipt.list(table, "")?;

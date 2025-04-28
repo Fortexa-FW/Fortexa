@@ -1,8 +1,13 @@
-use crate::{firewall::iptables::iptables_manager::IPTablesManager, firewall::iptables::iptables, firewall::iptables::iptables::IPTablesInterface, firewall::iptables::rules::IPTablesRuleSet, RULES_FILE };
+use crate::{
+    RULES_FILE, firewall::iptables::iptables_impl,
+    firewall::iptables::iptables_impl::IPTablesInterface,
+    firewall::iptables::iptables_manager::IPTablesManager,
+    firewall::iptables::rules::IPTablesRuleSet,
+};
 use axum::{
-    http::StatusCode,
     Json, Router,
     extract::State,
+    http::StatusCode,
     routing::{delete, get, post},
 };
 use ipnetwork::Ipv4Network;
@@ -69,20 +74,30 @@ pub struct DeleteDirectionRules {
     pub whitelisted_ports: HashSet<u16>,
 }
 
-pub fn iptables_router<T: iptables::IPTablesInterface + 'static>(iptables_mgr: Arc<Mutex<IPTablesManager<T>>>, rules: Arc<Mutex<IPTablesRuleSet>>) -> Router {
-    let state = IPTablesAppState { iptables_mgr, rules };
+pub fn iptables_router<T: iptables_impl::IPTablesInterface + 'static>(
+    iptables_mgr: Arc<Mutex<IPTablesManager<T>>>,
+    rules: Arc<Mutex<IPTablesRuleSet>>,
+) -> Router {
+    let state = IPTablesAppState {
+        iptables_mgr,
+        rules,
+    };
 
     Router::new()
-        .route("/iptables/rules", get(get_rules::<T>).post(replace_rules::<T>))
+        .route(
+            "/iptables/rules",
+            get(get_rules::<T>).post(replace_rules::<T>),
+        )
         .route("/iptables/rules/append", post(append_rules::<T>))
         .route("/iptables/rules/delete", delete(delete_rules::<T>))
         .route("/iptables/rules/reset", post(reset_iptables_rules::<T>))
         .with_state(state)
 }
 
-
 // GET handler for rules endpoint
-async fn get_rules<T: IPTablesInterface + Send + Sync + 'static>(State(state): State<IPTablesAppState<T>>) -> Json<IPTablesRuleSet> {
+async fn get_rules<T: IPTablesInterface + Send + Sync + 'static>(
+    State(state): State<IPTablesAppState<T>>,
+) -> Json<IPTablesRuleSet> {
     let rules = state.rules.lock().await;
     Json(rules.clone())
 }
@@ -165,52 +180,59 @@ async fn delete_rules<T: IPTablesInterface + Send + Sync>(
     let iptables_mgr = state.iptables_mgr.lock().await;
 
     // Remove input rules
-    current_rules.input.blocked_ips.retain(|ip|
-        !delete_request.input.blocked_ips.contains(ip)
-    );
-    current_rules.input.blocked_ports.retain(|port|
-        !delete_request.input.blocked_ports.contains(port)
-    );
-    current_rules.input.whitelisted_ips.retain(|ip|
-        !delete_request.input.whitelisted_ips.contains(ip)
-    );
-    current_rules.input.whitelisted_ports.retain(|port|
-        !delete_request.input.whitelisted_ports.contains(port)
-    );
+    current_rules
+        .input
+        .blocked_ips
+        .retain(|ip| !delete_request.input.blocked_ips.contains(ip));
+    current_rules
+        .input
+        .blocked_ports
+        .retain(|port| !delete_request.input.blocked_ports.contains(port));
+    current_rules
+        .input
+        .whitelisted_ips
+        .retain(|ip| !delete_request.input.whitelisted_ips.contains(ip));
+    current_rules
+        .input
+        .whitelisted_ports
+        .retain(|port| !delete_request.input.whitelisted_ports.contains(port));
 
     // Remove output rules
-    current_rules.output.blocked_ips.retain(|ip|
-        !delete_request.output.blocked_ips.contains(ip)
-    );
-    current_rules.output.blocked_ports.retain(|port|
-        !delete_request.output.blocked_ports.contains(port)
-    );
-    current_rules.output.whitelisted_ips.retain(|ip|
-        !delete_request.output.whitelisted_ips.contains(ip)
-    );
-    current_rules.output.whitelisted_ports.retain(|port|
-        !delete_request.output.whitelisted_ports.contains(port)
-    );
+    current_rules
+        .output
+        .blocked_ips
+        .retain(|ip| !delete_request.output.blocked_ips.contains(ip));
+    current_rules
+        .output
+        .blocked_ports
+        .retain(|port| !delete_request.output.blocked_ports.contains(port));
+    current_rules
+        .output
+        .whitelisted_ips
+        .retain(|ip| !delete_request.output.whitelisted_ips.contains(ip));
+    current_rules
+        .output
+        .whitelisted_ports
+        .retain(|port| !delete_request.output.whitelisted_ports.contains(port));
 
     // Sync with firewall
-    iptables_mgr.sync_rules(&current_rules)
-        .map_err(|e| {
-            let msg = format!("Failed to sync rules: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, msg)
-        })?;
+    iptables_mgr.sync_rules(&current_rules).map_err(|e| {
+        let msg = format!("Failed to sync rules: {}", e);
+        (StatusCode::INTERNAL_SERVER_ERROR, msg)
+    })?;
 
     // Persist rules
-    current_rules.save_to_file(RULES_FILE)
-        .map_err(|e| {
-            let msg = format!("Failed to save rules: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, msg)
-        })?;
+    current_rules.save_to_file(RULES_FILE);
 
     Ok(Json("Rules deleted successfully"))
 }
 
-async fn reset_iptables_rules<T: IPTablesInterface + Send + Sync + 'static>(State(state): State<IPTablesAppState<T>>) -> Json<&'static str> {
+async fn reset_iptables_rules<T: IPTablesInterface + Send + Sync + 'static>(
+    State(state): State<IPTablesAppState<T>>,
+) -> Json<&'static str> {
     let iptables_mgr = state.iptables_mgr.lock().await;
-    iptables_mgr.delete_rules().expect("Failed to delete all rules");
+    iptables_mgr
+        .delete_rules()
+        .expect("Failed to delete all rules");
     Json("All iptables rules deleted")
 }

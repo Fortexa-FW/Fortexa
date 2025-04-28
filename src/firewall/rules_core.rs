@@ -1,9 +1,6 @@
 use crate::{
-    firewall::{
-        error::FirewallError,
-        rules::IPTablesRuleSet,
-    },
     RULES_FILE,
+    firewall::{error::FirewallError, iptables::rules::IPTablesRuleSet},
 };
 
 pub struct RulesManager {
@@ -12,15 +9,12 @@ pub struct RulesManager {
 
 impl RulesManager {
     pub fn new() -> Result<Self, FirewallError> {
-        let rules = IPTablesRuleSet::load_from_file(RULES_FILE);
-        
-        Ok(Self {
-            rules
-        })
+        let iptables_rules = IPTablesRuleSet::load_from_file(RULES_FILE);
+
+        Ok(Self { iptables_rules })
     }
 
     pub fn get_iptables_rules(&self) -> &IPTablesRuleSet {
         &self.iptables_rules
     }
-
 }
