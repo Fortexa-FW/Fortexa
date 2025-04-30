@@ -1,7 +1,17 @@
 use fortexa::firewall::core::FirewallManager;
+use log::debug;
+
+fn is_root() -> bool {
+    std::env::var("USER") == Ok("root".to_string())
+}
 
 #[tokio::test]
 async fn test_firewall_initialization() {
+    if !is_root() {
+        debug!("Skipping test: requires root privileges");
+        return;
+    }
+
     // Test firewall manager initialization
     let result = FirewallManager::new();
     match result {
@@ -22,6 +32,11 @@ async fn test_firewall_initialization() {
 
 #[tokio::test]
 async fn test_firewall_rules_sync() {
+    if !is_root() {
+        debug!("Skipping test: requires root privileges");
+        return;
+    }
+
     let firewall_result = FirewallManager::new();
     let rules_result = fortexa::firewall::rules_core::RulesManager::new();
 
@@ -44,4 +59,4 @@ async fn test_firewall_rules_sync() {
             panic!("Unexpected error: {}", e);
         }
     }
-} 
+}

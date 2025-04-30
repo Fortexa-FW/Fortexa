@@ -85,14 +85,28 @@ cargo build
 cargo run
 ```
 
+- **Run the project with privileges and debug log-level:**
+
+```bash
+sudo RUST_LOG=debug ./target/release/fortexa
+```
+
 ---
 
 ## Testing
 
+> [!IMPORTANT]
+> This project may need some specific right as the iptables and network feature needs privileges to be running.
+>
+> Some tests need the sudo command, we recommend to always run the tests with `-- --show-output` flag to get skipping message.
+>
+> If skipping message is displayed use the cargo test command with sudo.
+>
+
 - **Run all tests:**
 
 ```bash
-cargo test
+cargo test -- --include-ignored --show-output
 ```
 
 - **Run a specific test:**

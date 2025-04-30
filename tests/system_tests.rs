@@ -1,9 +1,9 @@
+use axum::body::Body;
+use axum::http::Request;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tokio::time::{timeout, Duration};
-use axum::http::Request;
+use tokio::time::{Duration, timeout};
 use tower::ServiceExt;
-use axum::body::Body;
 
 #[tokio::test]
 async fn test_shared_state_creation() {
@@ -17,8 +17,16 @@ async fn test_shared_state_creation() {
             let rules_arc = Arc::new(Mutex::new(rules));
 
             // The reference count should be 1 for each Arc since we haven't cloned them yet
-            assert_eq!(Arc::strong_count(&firewall_arc), 1, "Firewall Arc should have reference count of 1");
-            assert_eq!(Arc::strong_count(&rules_arc), 1, "Rules Arc should have reference count of 1");
+            assert_eq!(
+                Arc::strong_count(&firewall_arc),
+                1,
+                "Firewall Arc should have reference count of 1"
+            );
+            assert_eq!(
+                Arc::strong_count(&rules_arc),
+                1,
+                "Rules Arc should have reference count of 1"
+            );
         }
         (Err(firewall_err), _) if firewall_err.to_string().contains("Chain already exists") => {
             // Acceptable error case for firewall
@@ -59,7 +67,7 @@ async fn test_full_system_integration() {
         }
         Err(e) => panic!("Failed to create FirewallManager: {}", e),
     };
-    
+
     let rules_manager = match fortexa::firewall::rules_core::RulesManager::new() {
         Ok(rm) => rm,
         Err(e) if e.to_string().contains("Permission denied") => {
@@ -69,16 +77,14 @@ async fn test_full_system_integration() {
         }
         Err(e) => panic!("Failed to create RulesManager: {}", e),
     };
-    
+
     let firewall_arc = Arc::new(tokio::sync::Mutex::new(firewall_manager));
     let rules_arc = Arc::new(Mutex::new(rules_manager));
-    
+
     // Create the router with a reasonable timeout
-    let app_future = fortexa::api::api_server::router(
-        Arc::clone(&firewall_arc),
-        Arc::clone(&rules_arc)
-    );
-    
+    let app_future =
+        fortexa::api::api_server::router(Arc::clone(&firewall_arc), Arc::clone(&rules_arc));
+
     let app = match timeout(Duration::from_secs(5), app_future).await {
         Ok(app) => app,
         Err(_) => panic!("Timed out while creating API router"),
@@ -87,8 +93,14 @@ async fn test_full_system_integration() {
     // Test health check endpoint with timeout
     let health_check = timeout(
         Duration::from_secs(5),
-        app.clone().oneshot(Request::builder().uri("/iptables/rules").body(Body::empty()).unwrap())
-    ).await;
+        app.clone().oneshot(
+            Request::builder()
+                .uri("/iptables/rules")
+                .body(Body::empty())
+                .unwrap(),
+        ),
+    )
+    .await;
 
     match health_check {
         Ok(Ok(response)) => assert_eq!(response.status(), 200, "Health check should return 200"),
@@ -99,12 +111,18 @@ async fn test_full_system_integration() {
     // Test rules endpoint with timeout
     let rules_check = timeout(
         Duration::from_secs(5),
-        app.clone().oneshot(Request::builder().uri("/iptables/rules").body(Body::empty()).unwrap())
-    ).await;
+        app.clone().oneshot(
+            Request::builder()
+                .uri("/iptables/rules")
+                .body(Body::empty())
+                .unwrap(),
+        ),
+    )
+    .await;
 
     match rules_check {
         Ok(Ok(response)) => assert_eq!(response.status(), 200, "Rules endpoint should return 200"),
         Ok(Err(e)) => panic!("Rules request failed: {}", e),
         Err(_) => panic!("Rules check timed out after 5 seconds"),
     }
-} 
+}
