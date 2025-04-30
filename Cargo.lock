@@ -249,7 +249,6 @@ dependencies = [
  "env_logger",
  "futures",
  "hyper",
- "ipnetwork 0.20.0",
  "ipnetwork 0.21.1",
  "iptables",
  "log",

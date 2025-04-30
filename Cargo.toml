@@ -29,5 +29,5 @@ once_cell = "1.21"
 
 [dev-dependencies]
 mockall = "0.13"
-ipnetwork = "0.20"
+ipnetwork = { version = "0.21", features = ["serde"] }
 tower = "0.5"

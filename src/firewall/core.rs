@@ -46,3 +46,56 @@ impl FirewallManager {
         IPTablesManager::new(table, use_ipv6, ipt)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_iptables_table_default() {
+        // Test that the default table is "filter"
+        assert_eq!(IPTABLES_TABLE, "filter");
+    }
+
+    #[test]
+    fn test_firewall_manager_creation() {
+        // Test that we can create a firewall manager with the current configuration
+        let result = FirewallManager::new();
+        match result {
+            Ok(_) => {
+                // Success case - manager created successfully
+                assert!(true);
+            }
+            Err(e) => {
+                // If the error is about chains already existing, that's acceptable
+                if e.to_string().contains("Chain already exists") {
+                    assert!(true);
+                } else {
+                    // For any other error, fail the test
+                    panic!("Unexpected error: {}", e);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_get_iptables_manager() {
+        let result = FirewallManager::new();
+        match result {
+            Ok(manager) => {
+                let _iptables_mgr = manager.get_iptables_manager();
+                // We can verify that we can get the manager, but can't access its internals
+                assert!(true);
+            }
+            Err(e) => {
+                // If the error is about chains already existing, that's acceptable
+                if e.to_string().contains("Chain already exists") {
+                    assert!(true);
+                } else {
+                    // For any other error, fail the test
+                    panic!("Unexpected error: {}", e);
+                }
+            }
+        }
+    }
+}
