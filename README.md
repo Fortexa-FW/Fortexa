@@ -37,7 +37,7 @@ http://localhost:3000
 
 ### 1. Get Current Rules
 
-**`GET /rules`**
+**`GET /iptables/rules`**
 
 Returns your current firewall rules.
 
@@ -65,7 +65,7 @@ Returns your current firewall rules.
 
 ### 2. Replace All Rules
 
-**`POST /rules`**
+**`POST /iptables/rules`**
 
 **(Warning: This replaces the entire current rule set!)**
 
@@ -99,7 +99,7 @@ Returns your current firewall rules.
 
 ### 3. Append Rules (Partial Update)
 
-**`POST /rules/append`**
+**`POST /iptables/rules/append`**
 
 Appends entries to existing rules (does not replace!). Fields are optional; only supplied fields are appended.
 
@@ -125,7 +125,7 @@ Appends entries to existing rules (does not replace!). Fields are optional; only
 
 ### 4. Delete Specific Rules
 
-**`DELETE /rules/delete`**
+**`DELETE /iptables/rules/delete`**
 
 Removes specific entries from blocked/whitelisted IPs/ports.
 Fields are optional; only supplied rules will be deleted.
@@ -165,7 +165,7 @@ Fields are optional; only supplied rules will be deleted.
 **Replace all rules:**
 
 ```sh
-curl -X POST http://localhost:3000/rules \
+curl -X POST http://localhost:3000/iptables/rules \
   -H "Content-Type: application/json" \
   -d @rules.json
 ```
@@ -173,7 +173,7 @@ curl -X POST http://localhost:3000/rules \
 **Append a blocked IP:**
 
 ```sh
-curl -X POST http://localhost:3000/rules/append \
+curl -X POST http://localhost:3000/iptables/rules/append \
   -H "Content-Type: application/json" \
   -d '{"input":{"blocked_ips":["172.16.0.0/12"]}}'
 ```
@@ -181,7 +181,7 @@ curl -X POST http://localhost:3000/rules/append \
 **Delete a blocked port:**
 
 ```sh
-curl -X DELETE http://localhost:3000/rules/delete \
+curl -X DELETE http://localhost:3000/iptables/rules/delete \
   -H "Content-Type: application/json" \
   -d '{"output":{"blocked_ports":[25]}}'
 ```
@@ -200,7 +200,7 @@ Removes (deletes) **all firewall rules** in both the kernel and the persisted `r
 ### Request
 
 ```
-POST /rules/reset
+POST /iptables/rules/reset
 ```
 
 **No body required.**
@@ -216,7 +216,7 @@ POST /rules/reset
 ### Example using cURL
 
 ```sh
-curl -X POST http://localhost:3000/rules/reset
+curl -X POST http://localhost:3000/iptables/rules/reset
 ```
 
 

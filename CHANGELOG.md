@@ -23,3 +23,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New templates for issues (bug_report, documentation, enhancement, features)
 - New DEVELOPMENT.md file for guidelines
 - Pull request templates
+- Refactor the code to get something more agnostic
+- Split files into differents modules
+- Build units and integrations tests
