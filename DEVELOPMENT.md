@@ -85,7 +85,19 @@ cargo build
 cargo run
 ```
 
-- **Run the project with privileges and debug log-level:**
+- **Build the project for release:**
+
+```bash
+cargo build --release
+```
+
+- **Run the project release with privileges and debug log-level:**
+
+> [!NOTE]
+> The default location if a build is done without `--release` flag is `./target/release/fortexa`.
+>
+> You can run this command even if you haven't made a release build.
+>
 
 ```bash
 sudo RUST_LOG=debug ./target/release/fortexa
