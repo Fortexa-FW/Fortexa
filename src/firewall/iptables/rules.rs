@@ -2,18 +2,17 @@ use ipnetwork::Ipv4Network;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs;
-use std::path::Path;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct FirewallRuleSet {
+pub struct IPTablesRuleSet {
     #[serde(default = "default_table")]
     pub table: String,
-    pub input: FirewallDirectionRules,
-    pub output: FirewallDirectionRules,
+    pub input: IPTablesDirectionRules,
+    pub output: IPTablesDirectionRules,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct FirewallDirectionRules {
+pub struct IPTablesDirectionRules {
     pub blocked_ips: HashSet<Ipv4Network>,
     pub blocked_ports: HashSet<u16>,
     pub whitelisted_ips: HashSet<Ipv4Network>,
@@ -21,15 +20,15 @@ pub struct FirewallDirectionRules {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct FirewallRuleSetUpdate {
+pub struct IPTablesRuleSetUpdate {
     #[serde(default)]
-    pub input: FirewallDirectionRulesUpdate,
+    pub input: IPTablesDirectionRulesUpdate,
     #[serde(default)]
-    pub output: FirewallDirectionRulesUpdate,
+    pub output: IPTablesDirectionRulesUpdate,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct FirewallDirectionRulesUpdate {
+pub struct IPTablesDirectionRulesUpdate {
     #[serde(default)]
     pub blocked_ips: HashSet<Ipv4Network>,
     #[serde(default)]
@@ -44,20 +43,23 @@ fn default_table() -> String {
     "filter".to_string()
 }
 
-impl FirewallRuleSet {
-    pub fn load_from_file(path: &str) -> FirewallRuleSet {
-        let data = std::fs::read_to_string(path).unwrap_or_default();
-        let rules: FirewallRuleSet = serde_json::from_str(&data).unwrap_or_else(|e| {
+impl IPTablesRuleSet {
+    pub fn load_from_file(path: &str) -> IPTablesRuleSet {
+        let data = fs::read_to_string(path).unwrap_or_default();
+        let rules: IPTablesRuleSet = serde_json::from_str(&data).unwrap_or_else(|e| {
             log::error!("Failed to parse rules.json: {}", e);
-            FirewallRuleSet::default()
+            IPTablesRuleSet::default()
         });
         log::debug!("Loaded rules: {:?}", rules);
         rules
     }
 
-    pub fn save_to_file<P: AsRef<Path>>(&self, path: P) {
-        if let Ok(data) = serde_json::to_string_pretty(self) {
-            let _ = fs::write(path, data);
+    pub fn save_to_file(&self, path: &str) {
+        if let Err(e) = serde_json::to_string_pretty(self)
+            .map_err(|e| e.to_string())
+            .and_then(|json| fs::write(path, json).map_err(|e| e.to_string()))
+        {
+            log::error!("Failed to save rules to file {}: {}", path, e);
         }
     }
 }
