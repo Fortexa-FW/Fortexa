@@ -1,17 +1,17 @@
 use anyhow::Result;
 use axum::{
+    Router,
     extract::{Json, Path, State},
     http::StatusCode,
     response::IntoResponse,
     routing::{delete, get, post, put},
-    Router,
 };
 use log::{error, info};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tokio::net::TcpListener;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use tokio::net::TcpListener;
 use tower_http::trace::TraceLayer;
 
 use crate::core::engine::Engine;
@@ -36,34 +36,34 @@ struct ErrorResponse {
 struct RuleRequest {
     /// Rule name
     name: String,
-    
+
     /// Rule description
     description: Option<String>,
-    
+
     /// Rule direction
     direction: String,
-    
+
     /// Source IP address or network
     source: Option<String>,
-    
+
     /// Destination IP address or network
     destination: Option<String>,
-    
+
     /// Source port or port range
     source_port: Option<String>,
-    
+
     /// Destination port or port range
     destination_port: Option<String>,
-    
+
     /// Protocol (tcp, udp, icmp, etc.)
     protocol: Option<String>,
-    
+
     /// Rule action
     action: String,
-    
+
     /// Whether the rule is enabled
     enabled: Option<bool>,
-    
+
     /// Rule priority
     priority: Option<i32>,
 }
@@ -73,25 +73,25 @@ impl RestService {
     pub fn new(engine: Engine) -> Self {
         Self { engine }
     }
-    
+
     /// Run the service
     pub async fn run(self) -> Result<()> {
         let config = self.engine.get_config();
-        
+
         if !config.services.rest.enabled {
             info!("REST API service is disabled");
             return Ok(());
         }
-        
+
         let bind_address = &config.services.rest.bind_address;
         let port = config.services.rest.port;
-        
+
         let addr = format!("{}:{}", bind_address, port)
             .parse::<SocketAddr>()
             .unwrap();
-        
+
         info!("Starting REST API service on {}", addr);
-       
+
         let app = Router::new()
             .route("/api/rules", get(Self::list_rules))
             .route("/api/rules", post(Self::add_rule))
@@ -107,7 +107,7 @@ impl RestService {
 
         Ok(())
     }
-    
+
     /// List all rules
     async fn list_rules(State(engine): State<Arc<Engine>>) -> impl IntoResponse {
         match engine.list_rules() {
@@ -116,7 +116,9 @@ impl RestService {
                 error!("Failed to list rules: {}", e);
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ErrorResponse { message: e.to_string() }),
+                    Json(ErrorResponse {
+                        message: e.to_string(),
+                    }),
                 )
                     .into_response()
             }
@@ -131,13 +133,15 @@ impl RestService {
                 error!("Failed to reset rules: {}", e);
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ErrorResponse { message: e.to_string() }),
+                    Json(ErrorResponse {
+                        message: e.to_string(),
+                    }),
                 )
                     .into_response()
             }
         }
     }
-    
+
     /// Add a rule
     async fn add_rule(
         State(engine): State<Arc<Engine>>,
@@ -158,7 +162,7 @@ impl RestService {
                     .into_response();
             }
         };
-        
+
         // Parse action
         let action = match rule_req.action.to_lowercase().as_str() {
             "accept" => Action::Accept,
@@ -175,7 +179,7 @@ impl RestService {
                     .into_response();
             }
         };
-        
+
         // Create the rule
         let mut rule = Rule::new(
             rule_req.name,
@@ -183,7 +187,7 @@ impl RestService {
             action,
             rule_req.priority.unwrap_or(0),
         );
-        
+
         rule.description = rule_req.description;
         rule.source = rule_req.source;
         rule.destination = rule_req.destination;
@@ -191,7 +195,7 @@ impl RestService {
         rule.destination_port = rule_req.destination_port;
         rule.protocol = rule_req.protocol;
         rule.enabled = rule_req.enabled.unwrap_or(true);
-        
+
         // Add the rule
         match engine.add_rule(rule) {
             Ok(rule_id) => (StatusCode::CREATED, Json(json!({"id": rule_id}))).into_response(),
@@ -199,13 +203,15 @@ impl RestService {
                 error!("Failed to add rule: {}", e);
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ErrorResponse { message: e.to_string() }),
+                    Json(ErrorResponse {
+                        message: e.to_string(),
+                    }),
                 )
                     .into_response()
             }
         }
     }
-    
+
     /// Get a rule
     async fn get_rule(
         State(engine): State<Arc<Engine>>,
@@ -217,13 +223,15 @@ impl RestService {
                 error!("Failed to get rule {}: {}", rule_id, e);
                 (
                     StatusCode::NOT_FOUND,
-                    Json(ErrorResponse { message: e.to_string() }),
+                    Json(ErrorResponse {
+                        message: e.to_string(),
+                    }),
                 )
                     .into_response()
             }
         }
     }
-    
+
     /// Update a rule
     async fn update_rule(
         State(engine): State<Arc<Engine>>,
@@ -237,12 +245,14 @@ impl RestService {
                 error!("Failed to get rule {}: {}", rule_id, e);
                 return (
                     StatusCode::NOT_FOUND,
-                    Json(ErrorResponse { message: e.to_string() }),
+                    Json(ErrorResponse {
+                        message: e.to_string(),
+                    }),
                 )
                     .into_response();
             }
         };
-        
+
         // Parse direction
         let direction = match rule_req.direction.to_lowercase().as_str() {
             "input" => Direction::Input,
@@ -258,7 +268,7 @@ impl RestService {
                     .into_response();
             }
         };
-        
+
         // Parse action
         let action = match rule_req.action.to_lowercase().as_str() {
             "accept" => Action::Accept,
@@ -275,7 +285,7 @@ impl RestService {
                     .into_response();
             }
         };
-        
+
         // Update the rule
         let mut updated_rule = rule.clone();
         updated_rule.name = rule_req.name;
@@ -289,7 +299,7 @@ impl RestService {
         updated_rule.action = action;
         updated_rule.enabled = rule_req.enabled.unwrap_or(true);
         updated_rule.priority = rule_req.priority.unwrap_or(0);
-        
+
         // Apply the update
         match engine.update_rule(updated_rule) {
             Ok(_) => (StatusCode::OK, Json(json!({"success": true}))).into_response(),
@@ -297,13 +307,15 @@ impl RestService {
                 error!("Failed to update rule {}: {}", rule_id, e);
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ErrorResponse { message: e.to_string() }),
+                    Json(ErrorResponse {
+                        message: e.to_string(),
+                    }),
                 )
                     .into_response()
             }
         }
     }
-    
+
     /// Delete a rule
     async fn delete_rule(
         State(engine): State<Arc<Engine>>,
@@ -315,7 +327,9 @@ impl RestService {
                 error!("Failed to delete rule {}: {}", rule_id, e);
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ErrorResponse { message: e.to_string() }),
+                    Json(ErrorResponse {
+                        message: e.to_string(),
+                    }),
                 )
                     .into_response()
             }

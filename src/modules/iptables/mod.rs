@@ -34,10 +34,7 @@ impl IptablesModule {
 
         let filter = IptablesFilter::new(&chain_prefix)?;
 
-        Ok(Self {
-            config,
-            filter,
-        })
+        Ok(Self { config, filter })
     }
 }
 

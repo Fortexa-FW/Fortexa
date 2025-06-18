@@ -55,7 +55,8 @@ impl IptablesFilter {
         if !output.status.success() {
             // Chain doesn't exist, create it
             info!("Creating chain: {}", chain);
-            self.iptables.new_chain(TABLE_NAME, chain)
+            self.iptables
+                .new_chain(TABLE_NAME, chain)
                 .map_err(|e| anyhow::anyhow!("{}", e))
                 .context(format!("Failed to create chain: {}", chain))?;
         } else {
@@ -68,28 +69,52 @@ impl IptablesFilter {
     /// Add jump rules to the built-in chains
     fn add_jump_rules(&self) -> Result<()> {
         // Check if the jump rules exist
-        let input_exists = self.jump_rule_exists("INPUT", &format!("{}_INPUT", self.chain_prefix))?;
-        let output_exists = self.jump_rule_exists("OUTPUT", &format!("{}_OUTPUT", self.chain_prefix))?;
-        let forward_exists = self.jump_rule_exists("FORWARD", &format!("{}_FORWARD", self.chain_prefix))?;
+        let input_exists =
+            self.jump_rule_exists("INPUT", &format!("{}_INPUT", self.chain_prefix))?;
+        let output_exists =
+            self.jump_rule_exists("OUTPUT", &format!("{}_OUTPUT", self.chain_prefix))?;
+        let forward_exists =
+            self.jump_rule_exists("FORWARD", &format!("{}_FORWARD", self.chain_prefix))?;
 
         // Add the jump rules if they don't exist
         if !input_exists {
             info!("Adding jump rule from INPUT to {}_INPUT", self.chain_prefix);
-            self.iptables.append(TABLE_NAME, "INPUT", &format!("-j {}_INPUT", self.chain_prefix))
+            self.iptables
+                .append(
+                    TABLE_NAME,
+                    "INPUT",
+                    &format!("-j {}_INPUT", self.chain_prefix),
+                )
                 .map_err(|e| anyhow::anyhow!("{}", e))
                 .context("Failed to add jump rule to INPUT chain")?;
         }
 
         if !output_exists {
-            info!("Adding jump rule from OUTPUT to {}_OUTPUT", self.chain_prefix);
-            self.iptables.append(TABLE_NAME, "OUTPUT", &format!("-j {}_OUTPUT", self.chain_prefix))
+            info!(
+                "Adding jump rule from OUTPUT to {}_OUTPUT",
+                self.chain_prefix
+            );
+            self.iptables
+                .append(
+                    TABLE_NAME,
+                    "OUTPUT",
+                    &format!("-j {}_OUTPUT", self.chain_prefix),
+                )
                 .map_err(|e| anyhow::anyhow!("{}", e))
                 .context("Failed to add jump rule to OUTPUT chain")?;
         }
 
         if !forward_exists {
-            info!("Adding jump rule from FORWARD to {}_FORWARD", self.chain_prefix);
-            self.iptables.append(TABLE_NAME, "FORWARD", &format!("-j {}_FORWARD", self.chain_prefix))
+            info!(
+                "Adding jump rule from FORWARD to {}_FORWARD",
+                self.chain_prefix
+            );
+            self.iptables
+                .append(
+                    TABLE_NAME,
+                    "FORWARD",
+                    &format!("-j {}_FORWARD", self.chain_prefix),
+                )
                 .map_err(|e| anyhow::anyhow!("{}", e))
                 .context("Failed to add jump rule to FORWARD chain")?;
         }
@@ -129,13 +154,16 @@ impl IptablesFilter {
         info!("Clearing existing rules");
 
         // Flush the chains
-        self.iptables.flush_chain(TABLE_NAME, &format!("{}_INPUT", self.chain_prefix))
+        self.iptables
+            .flush_chain(TABLE_NAME, &format!("{}_INPUT", self.chain_prefix))
             .map_err(|e| anyhow::anyhow!("{}", e))
             .context("Failed to flush INPUT chain")?;
-        self.iptables.flush_chain(TABLE_NAME, &format!("{}_OUTPUT", self.chain_prefix))
+        self.iptables
+            .flush_chain(TABLE_NAME, &format!("{}_OUTPUT", self.chain_prefix))
             .map_err(|e| anyhow::anyhow!("{}", e))
             .context("Failed to flush OUTPUT chain")?;
-        self.iptables.flush_chain(TABLE_NAME, &format!("{}_FORWARD", self.chain_prefix))
+        self.iptables
+            .flush_chain(TABLE_NAME, &format!("{}_FORWARD", self.chain_prefix))
             .map_err(|e| anyhow::anyhow!("{}", e))
             .context("Failed to flush FORWARD chain")?;
 
@@ -196,14 +224,15 @@ impl IptablesFilter {
                 args.push("-j LOG".to_string());
                 args.push("--log-prefix".to_string());
                 args.push(format!("\"[FORTEXA] {}: \"", rule.name));
-            },
+            }
         }
 
         // Execute the command
         let rule_str = args.join(" ");
         debug!("Adding rule to {}: {}", chain, rule_str);
 
-        self.iptables.append(TABLE_NAME, &chain, &rule_str)
+        self.iptables
+            .append(TABLE_NAME, &chain, &rule_str)
             .map_err(|e| anyhow::anyhow!("{}", e))
             .context(format!("Failed to add rule to chain: {}", chain))?;
 

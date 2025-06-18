@@ -34,10 +34,7 @@ impl LoggingModule {
 
         let logger = Logger::new(&log_file)?;
 
-        Ok(Self {
-            config,
-            logger,
-        })
+        Ok(Self { config, logger })
     }
 }
 

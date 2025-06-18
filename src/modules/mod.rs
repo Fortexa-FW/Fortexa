@@ -48,3 +48,9 @@ impl ModuleManager {
         self.modules.keys().cloned().collect()
     }
 }
+
+impl Default for ModuleManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}

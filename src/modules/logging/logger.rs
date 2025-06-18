@@ -22,8 +22,10 @@ impl Logger {
     pub fn new(log_file: &str) -> Result<Self> {
         // Ensure the directory exists
         if let Some(parent) = Path::new(log_file).parent() {
-            std::fs::create_dir_all(parent)
-                .context(format!("Failed to create log directory: {}", parent.display()))?;
+            std::fs::create_dir_all(parent).context(format!(
+                "Failed to create log directory: {}",
+                parent.display()
+            ))?;
         }
 
         // Open or create the log file
@@ -41,15 +43,17 @@ impl Logger {
 
     /// Initialize the logger
     pub fn init(&self) -> Result<()> {
-        self.log(&format!("Fortexa firewall logger initialized at {}", Local::now()))
+        self.log(&format!(
+            "Fortexa firewall logger initialized at {}",
+            Local::now()
+        ))
     }
 
     /// Log a message
     pub fn log(&self, message: &str) -> Result<()> {
         let mut file = self.file.lock().unwrap();
         let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S");
-        writeln!(file, "[{}] {}", timestamp, message)
-            .context("Failed to write to log file")?;
+        writeln!(file, "[{}] {}", timestamp, message).context("Failed to write to log file")?;
 
         Ok(())
     }
