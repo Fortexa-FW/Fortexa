@@ -24,7 +24,8 @@ async fn main() -> Result<()> {
 async fn run_services(engine: Engine) -> Result<()> {
     // Start the REST API service
     let rest_service = RestService::new(engine.clone());
-    let rest_handle = tokio::spawn(async move { rest_service.run().await });
+    let rest_handle =
+        tokio::spawn(async move { rest_service.run(Box::pin(std::future::pending())).await });
 
     // Wait for the services to exit
     let _ = rest_handle.await?;

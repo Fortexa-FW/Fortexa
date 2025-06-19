@@ -238,4 +238,27 @@ impl IptablesFilter {
 
         Ok(())
     }
+
+    pub fn cleanup(&self) -> Result<()> {
+        let chains = [
+            format!("{}_INPUT", self.chain_prefix),
+            format!("{}_OUTPUT", self.chain_prefix),
+            format!("{}_FORWARD", self.chain_prefix),
+        ];
+        let builtins = ["INPUT", "OUTPUT", "FORWARD"];
+
+        // Remove jump rules from built-in chains
+        for (builtin, custom) in builtins.iter().zip(chains.iter()) {
+            let _ = self
+                .iptables
+                .delete(TABLE_NAME, builtin, &format!("-j {}", custom));
+        }
+
+        // Flush and delete custom chains
+        for chain in chains.iter() {
+            let _ = self.iptables.flush_chain(TABLE_NAME, chain);
+            let _ = self.iptables.delete_chain(TABLE_NAME, chain);
+        }
+        Ok(())
+    }
 }

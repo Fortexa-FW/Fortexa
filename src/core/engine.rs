@@ -1,5 +1,5 @@
 use anyhow::Result;
-use log::{debug, error, info};
+use log::{debug, info};
 use std::sync::{Arc, Mutex};
 
 use crate::core::config::Config;
@@ -24,14 +24,9 @@ pub struct Engine {
 impl Engine {
     /// Create a new engine
     pub fn new(config_path: &str) -> Result<Self> {
-        let config = match Config::from_file(config_path) {
-            Ok(config) => config,
-            Err(e) => {
-                error!("Failed to load config from {}: {}", config_path, e);
-                info!("Using default configuration");
-                Config::get_default_configuration()
-            }
-        };
+        let config = Config::from_file(config_path)?;
+        info!("[Engine::new] Loaded config from: {}", config_path);
+        info!("[Engine::new] REST port: {}", config.services.rest.port);
         let config = Arc::new(config);
 
         let rules_manager = Arc::new(RulesManager::new(&config.general.rules_path)?);

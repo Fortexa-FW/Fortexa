@@ -6,12 +6,10 @@ use axum::{
     response::IntoResponse,
     routing::{delete, get, post, put},
 };
-use log::{error, info};
+use log::{debug, error, info};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::net::TcpListener;
 use tower_http::trace::TraceLayer;
 
 use crate::core::engine::Engine;
@@ -43,7 +41,7 @@ struct RuleRequest {
     /// Rule direction
     direction: String,
 
-    /// Source IP address or network
+    /// Source IP address or network"""
     source: Option<String>,
 
     /// Destination IP address or network
@@ -75,11 +73,15 @@ impl RestService {
     }
 
     /// Run the service
-    pub async fn run(self) -> Result<()> {
+    pub async fn run(
+        self,
+        shutdown: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'static>>,
+    ) -> Result<()> {
+        info!("[RestService] Entered run()");
         let config = self.engine.get_config();
 
         if !config.services.rest.enabled {
-            info!("REST API service is disabled");
+            info!("[RestService] REST API service is disabled");
             return Ok(());
         }
 
@@ -87,11 +89,23 @@ impl RestService {
         let port = config.services.rest.port;
 
         let addr = format!("{}:{}", bind_address, port)
-            .parse::<SocketAddr>()
+            .parse::<std::net::SocketAddr>()
             .unwrap();
 
-        info!("Starting REST API service on {}", addr);
+        info!("[RestService] Binding to address: {}", addr);
 
+        let listener = match tokio::net::TcpListener::bind(&addr).await {
+            Ok(l) => {
+                info!("[RestService] Successfully bound to {}", addr);
+                l
+            }
+            Err(e) => {
+                error!("[RestService] Failed to bind to {}: {}", addr, e);
+                return Err(e.into());
+            }
+        };
+
+        debug!("[RestService] Starting axum::serve");
         let app = Router::new()
             .route("/api/rules", get(Self::list_rules))
             .route("/api/rules", post(Self::add_rule))
@@ -101,9 +115,10 @@ impl RestService {
             .route("/api/rules/{id}", delete(Self::delete_rule))
             .layer(TraceLayer::new_for_http())
             .with_state(Arc::new(self.engine));
-
-        let listener = TcpListener::bind(&addr).await.unwrap();
-        axum::serve(listener, app).await.unwrap();
+        axum::serve(listener, app)
+            .with_graceful_shutdown(shutdown)
+            .await
+            .unwrap();
 
         Ok(())
     }

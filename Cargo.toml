@@ -42,6 +42,9 @@ hyper = "1.6"
 [dev-dependencies]
 tempfile = "3.19"
 mockall = "0.13"
+toml = "0.8"
+reqwest = { version = "0.11", features = ["json"] }
+portpicker = "0.1"
 
 # pnet = "0.35"
 # ipnetwork = { version = "0.21", features = ["serde"] }
