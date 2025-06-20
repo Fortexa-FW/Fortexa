@@ -29,7 +29,7 @@ settings = { log_file = "/var/log/fortexa.log" }
 [services.rest]
 enabled = true
 bind_address = "127.0.0.1"
-port = 3000
+port = 8080
 "#;
 
 /// The core firewall engine
@@ -168,5 +168,45 @@ impl Engine {
     /// Get the configuration
     pub fn get_config(&self) -> Arc<Config> {
         self.config.clone()
+    }
+
+    /// Add a rule with auto_create_chain option (for REST API only)
+    pub fn add_rule_with_auto_create(&self, rule: Rule, auto_create_chain: bool) -> Result<String> {
+        let rule_id = self.rules_manager.add_rule(rule.clone())?;
+        let rules = self.rules_manager.get_enabled_rules()?;
+        let module_manager = self.module_manager.lock().unwrap();
+        for module_name in module_manager.get_module_names() {
+            if let Some(module) = module_manager.get_module(&module_name) {
+                if module_name == "iptables" {
+                    // Downcast to IptablesModule
+                    if let Some(iptables) = module.as_any().downcast_ref::<crate::modules::iptables::IptablesModule>() {
+                        iptables.apply_rules_with_auto_create(&rules, auto_create_chain)?;
+                        continue;
+                    }
+                }
+                module.apply_rules(&rules)?;
+            }
+        }
+        Ok(rule_id)
+    }
+
+    /// Update a rule with auto_create_chain option (for REST API only)
+    pub fn update_rule_with_auto_create(&self, rule: Rule, auto_create_chain: bool) -> Result<()> {
+        self.rules_manager.update_rule(rule)?;
+        let rules = self.rules_manager.get_enabled_rules()?;
+        let module_manager = self.module_manager.lock().unwrap();
+        for module_name in module_manager.get_module_names() {
+            if let Some(module) = module_manager.get_module(&module_name) {
+                if module_name == "iptables" {
+                    // Downcast to IptablesModule
+                    if let Some(iptables) = module.as_any().downcast_ref::<crate::modules::iptables::IptablesModule>() {
+                        iptables.apply_rules_with_auto_create(&rules, auto_create_chain)?;
+                        continue;
+                    }
+                }
+                module.apply_rules(&rules)?;
+            }
+        }
+        Ok(())
     }
 }

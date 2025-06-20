@@ -47,4 +47,8 @@ impl Module for LoggingModule {
         // Log the rules being applied
         self.logger.log_rules_applied(rules)
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }

@@ -37,7 +37,7 @@ http://localhost:3000
 
 ### 1. Get Current Rules
 
-**`GET /iptables/rules`**
+**`GET /api/rules`**
 
 Returns your current firewall rules.
 

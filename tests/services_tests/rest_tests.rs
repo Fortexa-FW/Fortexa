@@ -34,6 +34,7 @@ async fn test_rest_api_add_list_delete_rule() {
                 "chain_prefix".to_string(),
                 serde_json::Value::String(chain_prefix.clone()),
             )]),
+            custom_chains: None,
         },
     );
     modules.insert(
@@ -44,6 +45,7 @@ async fn test_rest_api_add_list_delete_rule() {
                 "log_file".to_string(),
                 serde_json::Value::String("/tmp/test_fw.log".to_string()),
             )]),
+            custom_chains: None,
         },
     );
     let port = portpicker::pick_unused_port().expect("No ports free");
@@ -82,7 +84,7 @@ async fn test_rest_api_add_list_delete_rule() {
     });
     eprintln!("[debug] Server task spawned");
     let client = reqwest::Client::new();
-    let base_url = format!("http://127.0.0.1:{}/api/rules", port);
+    let base_url = format!("http://127.0.0.1:{}/api/filter/rules", port);
     // Wait for server
     let mut started = false;
     for _ in 0..50 {
@@ -155,6 +157,7 @@ async fn test_rest_api_add_rule_invalid_data() {
                 "chain_prefix".to_string(),
                 serde_json::Value::String(chain_prefix.clone()),
             )]),
+            custom_chains: None,
         },
     );
     modules.insert(
@@ -165,6 +168,7 @@ async fn test_rest_api_add_rule_invalid_data() {
                 "log_file".to_string(),
                 serde_json::Value::String("/tmp/test_fw.log".to_string()),
             )]),
+            custom_chains: None,
         },
     );
     let port = portpicker::pick_unused_port().expect("No ports free");
@@ -200,7 +204,7 @@ async fn test_rest_api_add_rule_invalid_data() {
         }
     });
     let client = reqwest::Client::new();
-    let base_url = format!("http://127.0.0.1:{}/api/rules", port);
+    let base_url = format!("http://127.0.0.1:{}/api/filter/rules", port);
     // Wait for server
     let mut started = false;
     for _ in 0..50 {
@@ -258,6 +262,7 @@ async fn test_rest_api_get_nonexistent_rule() {
                 "chain_prefix".to_string(),
                 serde_json::Value::String(chain_prefix.clone()),
             )]),
+            custom_chains: None,
         },
     );
     modules.insert(
@@ -268,6 +273,7 @@ async fn test_rest_api_get_nonexistent_rule() {
                 "log_file".to_string(),
                 serde_json::Value::String("/tmp/test_fw.log".to_string()),
             )]),
+            custom_chains: None,
         },
     );
     let port = portpicker::pick_unused_port().expect("No ports free");
@@ -303,7 +309,7 @@ async fn test_rest_api_get_nonexistent_rule() {
         }
     });
     let client = reqwest::Client::new();
-    let base_url = format!("http://127.0.0.1:{}/api/rules", port);
+    let base_url = format!("http://127.0.0.1:{}/api/filter/rules", port);
     // Wait for server
     let mut started = false;
     for _ in 0..50 {
@@ -350,6 +356,7 @@ async fn test_rest_api_update_rule() {
                 "chain_prefix".to_string(),
                 serde_json::Value::String(chain_prefix.clone()),
             )]),
+            custom_chains: None,
         },
     );
     modules.insert(
@@ -360,6 +367,7 @@ async fn test_rest_api_update_rule() {
                 "log_file".to_string(),
                 serde_json::Value::String("/tmp/test_fw.log".to_string()),
             )]),
+            custom_chains: None,
         },
     );
     let port = portpicker::pick_unused_port().expect("No ports free");
@@ -395,7 +403,7 @@ async fn test_rest_api_update_rule() {
         }
     });
     let client = reqwest::Client::new();
-    let base_url = format!("http://127.0.0.1:{}/api/rules", port);
+    let base_url = format!("http://127.0.0.1:{}/api/filter/rules", port);
     // Wait for server
     let mut started = false;
     for _ in 0..50 {
@@ -476,6 +484,7 @@ async fn test_rest_api_reset_all_rules() {
                 "chain_prefix".to_string(),
                 serde_json::Value::String(chain_prefix.clone()),
             )]),
+            custom_chains: None,
         },
     );
     modules.insert(
@@ -486,6 +495,7 @@ async fn test_rest_api_reset_all_rules() {
                 "log_file".to_string(),
                 serde_json::Value::String("/tmp/test_fw.log".to_string()),
             )]),
+            custom_chains: None,
         },
     );
     let port = portpicker::pick_unused_port().expect("No ports free");
@@ -521,7 +531,7 @@ async fn test_rest_api_reset_all_rules() {
         }
     });
     let client = reqwest::Client::new();
-    let base_url = format!("http://127.0.0.1:{}/api/rules", port);
+    let base_url = format!("http://127.0.0.1:{}/api/filter/rules", port);
     // Wait for server
     let mut started = false;
     for _ in 0..50 {

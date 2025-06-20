@@ -32,6 +32,7 @@ async fn test_engine_end_to_end() {
                 "chain_prefix".to_string(),
                 serde_json::Value::String(chain_prefix.clone()),
             )]),
+            custom_chains: None,
         },
     );
     modules.insert(
@@ -42,6 +43,7 @@ async fn test_engine_end_to_end() {
                 "log_file".to_string(),
                 serde_json::Value::String("/tmp/test_fw.log".to_string()),
             )]),
+            custom_chains: None,
         },
     );
     let config = Config {
@@ -105,6 +107,7 @@ async fn test_rest_api_end_to_end() {
                 "chain_prefix".to_string(),
                 serde_json::Value::String(chain_prefix.clone()),
             )]),
+            custom_chains: None,
         },
     );
     modules.insert(
@@ -115,6 +118,7 @@ async fn test_rest_api_end_to_end() {
                 "log_file".to_string(),
                 serde_json::Value::String("/tmp/test_fw.log".to_string()),
             )]),
+            custom_chains: None,
         },
     );
     let port = portpicker::pick_unused_port().expect("No ports free");
@@ -157,7 +161,7 @@ async fn test_rest_api_end_to_end() {
     });
     eprintln!("[test] Server task spawned");
     let client = reqwest::Client::new();
-    let base_url = format!("http://127.0.0.1:{}/api/rules", config.services.rest.port);
+    let base_url = format!("http://127.0.0.1:{}/api/filter/rules", config.services.rest.port);
     let mut started = false;
     for i in 0..50 {
         match client.get(base_url.as_str()).send().await {

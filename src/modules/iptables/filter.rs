@@ -2,6 +2,9 @@ use anyhow::{Context, Result};
 use iptables::IPTables;
 use log::{debug, info};
 use std::process::Command;
+use serde::{Serialize, Deserialize};
+use std::fs;
+use std::path::Path;
 
 use crate::core::rules::{Action, Direction, Rule};
 
@@ -15,6 +18,12 @@ pub struct IptablesFilter {
 }
 
 static TABLE_NAME: &str = "filter";
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct CustomChainEntry {
+    pub name: String,
+    pub reference_from: Option<String>,
+}
 
 impl IptablesFilter {
     /// Create a new IPTables filter
@@ -142,10 +151,8 @@ impl IptablesFilter {
             if !rule.enabled {
                 continue;
             }
-
             self.apply_rule(rule)?;
         }
-
         Ok(())
     }
 
@@ -170,15 +177,28 @@ impl IptablesFilter {
         Ok(())
     }
 
-    /// Apply a rule
-    fn apply_rule(&self, rule: &Rule) -> Result<()> {
-        // Determine the chain
+    /// Apply rules to the filter with auto_create_chain
+    pub fn apply_rules_with_auto_create(&self, rules: &[Rule], auto_create_chain: bool) -> Result<()> {
+        self.clear_rules()?;
+        for rule in rules {
+            if !rule.enabled {
+                continue;
+            }
+            self.apply_rule_with_flag(rule, auto_create_chain)?;
+        }
+        Ok(())
+    }
+
+    /// Apply a rule with auto_create_chain
+    fn apply_rule_with_flag(&self, rule: &Rule, auto_create_chain: bool) -> Result<()> {
         let chain = match rule.direction {
             Direction::Input => format!("{}_INPUT", self.chain_prefix),
             Direction::Output => format!("{}_OUTPUT", self.chain_prefix),
             Direction::Forward => format!("{}_FORWARD", self.chain_prefix),
         };
-
+        if auto_create_chain {
+            self.ensure_chain_exists(&chain)?;
+        }
         // Build the rule arguments
         let mut args = Vec::new();
 
@@ -230,12 +250,29 @@ impl IptablesFilter {
         // Execute the command
         let rule_str = args.join(" ");
         debug!("Adding rule to {}: {}", chain, rule_str);
-
         self.iptables
             .append(TABLE_NAME, &chain, &rule_str)
             .map_err(|e| anyhow::anyhow!("{}", e))
             .context(format!("Failed to add rule to chain: {}", chain))?;
+        Ok(())
+    }
 
+    /// The default apply_rule now always uses auto_create_chain = false
+    fn apply_rule(&self, rule: &Rule) -> Result<()> {
+        self.apply_rule_with_flag(rule, false)
+    }
+
+    fn ensure_chain_exists(&self, chain: &str) -> Result<()> {
+        let output = Command::new("iptables")
+            .args(["-t", TABLE_NAME, "-L", chain])
+            .output()
+            .context("Failed to execute iptables command")?;
+        if !output.status.success() {
+            self.iptables
+                .new_chain(TABLE_NAME, chain)
+                .map_err(|e| anyhow::anyhow!("{}", e))
+                .context(format!("Failed to create chain: {}", chain))?;
+        }
         Ok(())
     }
 
@@ -259,6 +296,93 @@ impl IptablesFilter {
             let _ = self.iptables.flush_chain(TABLE_NAME, chain);
             let _ = self.iptables.delete_chain(TABLE_NAME, chain);
         }
+        Ok(())
+    }
+
+    pub fn create_custom_chain(&self, name: &str, reference_from: Option<&str>) -> anyhow::Result<()> {
+        match self.iptables.new_chain("filter", name) {
+            Ok(_) => {},
+            Err(e) => {
+                let msg = format!("{}", e);
+                if !msg.contains("Chain already exists") {
+                    return Err(anyhow::anyhow!("{}", msg));
+                }
+                // else: chain already exists, treat as success
+            }
+        }
+        if let Some(builtin) = reference_from {
+            if !self.jump_rule_exists(builtin, name)? {
+                self.iptables
+                    .append("filter", builtin, &format!("-j {}", name))
+                    .map_err(|e| anyhow::anyhow!("{}", e))?;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn delete_custom_chain(&self, name: &str, reference_from: Option<&str>) -> anyhow::Result<()> {
+        if let Some(builtin) = reference_from {
+            let _ = self.iptables.delete("filter", builtin, &format!("-j {}", name));
+        }
+        // Flush and delete the chain
+        let _ = self.iptables.flush_chain("filter", name);
+        let _ = self.iptables.delete_chain("filter", name);
+        Ok(())
+    }
+
+    pub fn apply_custom_chains_from_file(path: &str) -> Result<()> {
+        if !Path::new(path).exists() {
+            return Ok(()); // Nothing to do
+        }
+        let data = fs::read_to_string(path)
+            .context(format!("Failed to read custom chains file: {}", path))?;
+        let chains: Vec<CustomChainEntry> = serde_json::from_str(&data)
+            .context("Failed to parse custom chains file")?;
+        let filter = IptablesFilter::new("")?; // Use empty prefix for direct names
+        for entry in chains {
+            filter.create_custom_chain(&entry.name, entry.reference_from.as_deref())?;
+        }
+        Ok(())
+    }
+
+    pub fn add_chain_to_file(path: &str, entry: &CustomChainEntry) -> Result<()> {
+        let mut chains = if Path::new(path).exists() {
+            let data = fs::read_to_string(path)?;
+            serde_json::from_str(&data).unwrap_or_else(|_| vec![])
+        } else {
+            vec![]
+        };
+        if !chains.iter().any(|c: &CustomChainEntry| c.name == entry.name) {
+            chains.push(entry.clone());
+        }
+        let json = serde_json::to_string_pretty(&chains)?;
+        fs::write(path, json)?;
+        Ok(())
+    }
+
+    pub fn remove_chain_from_file(path: &str, name: &str) -> Result<()> {
+        if !Path::new(path).exists() {
+            return Ok(());
+        }
+        let data = fs::read_to_string(path)?;
+        let mut chains: Vec<CustomChainEntry> = serde_json::from_str(&data).unwrap_or_else(|_| vec![]);
+        chains.retain(|c| c.name != name);
+        let json = serde_json::to_string_pretty(&chains)?;
+        fs::write(path, json)?;
+        Ok(())
+    }
+
+    pub fn add_rule_with_auto_create(&self, rules_manager: &crate::core::rules::RulesManager, rule: crate::core::rules::Rule, auto_create_chain: bool) -> Result<String> {
+        let rule_id = rules_manager.add_rule(rule.clone())?;
+        let rules = rules_manager.get_enabled_rules()?;
+        self.apply_rules_with_auto_create(&rules, auto_create_chain)?;
+        Ok(rule_id)
+    }
+
+    pub fn update_rule_with_auto_create(&self, rules_manager: &crate::core::rules::RulesManager, rule: crate::core::rules::Rule, auto_create_chain: bool) -> Result<()> {
+        rules_manager.update_rule(rule)?;
+        let rules = rules_manager.get_enabled_rules()?;
+        self.apply_rules_with_auto_create(&rules, auto_create_chain)?;
         Ok(())
     }
 }

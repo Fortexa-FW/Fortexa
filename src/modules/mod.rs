@@ -15,6 +15,9 @@ pub trait Module: Send + Sync {
 
     /// Apply rules to the module
     fn apply_rules(&self, rules: &[Rule]) -> Result<()>;
+
+    /// For downcasting
+    fn as_any(&self) -> &dyn std::any::Any;
 }
 
 /// Module manager
