@@ -17,6 +17,9 @@ async fn main() -> Result<()> {
     // Register all modules
     engine.register_all_modules()?;
 
+    // Apply rules from rules.json to iptables at startup
+    engine.apply_rules()?;
+
     // Start services in foreground
     run_services(engine).await?;
 
