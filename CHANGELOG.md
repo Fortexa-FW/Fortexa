@@ -33,3 +33,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Build units and integrations tests
 - Add default config.toml content 
 - Add custom chains creation, deletion
+- Add more tests for api, custom chains

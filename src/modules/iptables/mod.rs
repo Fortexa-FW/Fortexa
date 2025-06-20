@@ -41,7 +41,16 @@ impl IptablesModule {
 impl Module for IptablesModule {
     fn init(&self) -> Result<()> {
         self.filter.init()?;
-        crate::modules::iptables::filter::IptablesFilter::apply_custom_chains_from_file("/var/lib/fortexa/chains.json")?;
+        let chains_path = self
+            .config
+            .modules
+            .get("iptables")
+            .and_then(|m| m.settings.get("chains_path"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("/var/lib/fortexa/chains.json");
+        crate::modules::iptables::filter::IptablesFilter::apply_custom_chains_from_file(
+            chains_path,
+        )?;
         Ok(())
     }
 
@@ -55,7 +64,12 @@ impl Module for IptablesModule {
 }
 
 impl IptablesModule {
-    pub fn apply_rules_with_auto_create(&self, rules: &[crate::core::rules::Rule], auto_create_chain: bool) -> Result<()> {
-        self.filter.apply_rules_with_auto_create(rules, auto_create_chain)
+    pub fn apply_rules_with_auto_create(
+        &self,
+        rules: &[crate::core::rules::Rule],
+        auto_create_chain: bool,
+    ) -> Result<()> {
+        self.filter
+            .apply_rules_with_auto_create(rules, auto_create_chain)
     }
 }

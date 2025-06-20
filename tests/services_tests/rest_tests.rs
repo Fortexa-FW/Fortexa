@@ -1,74 +1,39 @@
+use crate::common::TEST_CONFIG_TOML;
 use crate::common::iptables::cleanup_test_chains;
-use fortexa::core::config::{Config, GeneralConfig, ModuleConfig, RestConfig, ServiceConfig};
 use fortexa::core::engine::Engine;
 use fortexa::services::rest::RestService;
 use portpicker;
 use serde_json::json;
-use std::collections::HashMap;
-use std::env;
 use std::fs;
-use std::path::PathBuf;
-use tempfile::NamedTempFile;
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_rest_api_add_list_delete_rule() {
-    eprintln!("[debug] test_rest_api_add_list_delete_rule running");
-    let rules_file = NamedTempFile::new().unwrap();
-    let rules_path = rules_file.path().to_str().unwrap().to_string();
-    eprintln!("[debug] Created temp rules file at: {}", rules_path);
-    std::fs::write(&rules_path, b"[]").unwrap();
-    let tmp_dir = env::temp_dir();
-    let config_path: PathBuf = tmp_dir.join(format!("test_config_{}.toml", uuid::Uuid::new_v4()));
-    eprintln!("[debug] Config path: {}", config_path.display());
+fn setup_test_paths() -> (String, String, String, String, u16) {
+    let test_dir = "/tmp/fortexa_test";
+    fs::create_dir_all(test_dir).unwrap();
+    let port = portpicker::pick_unused_port().expect("No ports free");
+    let chains_path = format!("{}/chains_{}.json", test_dir, port);
+    let rules_path = format!("{}/rules_{}.json", test_dir, port);
+    let config_path = format!("{}/config_{}.toml", test_dir, port);
     let chain_prefix = format!(
         "FORTEXA_TST_{}",
         &uuid::Uuid::new_v4().simple().to_string()[..8]
     );
-    eprintln!("[debug] Chain prefix: {}", chain_prefix);
-    let mut modules = HashMap::new();
-    modules.insert(
-        "iptables".to_string(),
-        ModuleConfig {
-            enabled: true,
-            settings: HashMap::from([(
-                "chain_prefix".to_string(),
-                serde_json::Value::String(chain_prefix.clone()),
-            )]),
-            custom_chains: None,
-        },
-    );
-    modules.insert(
-        "logging".to_string(),
-        ModuleConfig {
-            enabled: true,
-            settings: HashMap::from([(
-                "log_file".to_string(),
-                serde_json::Value::String("/tmp/test_fw.log".to_string()),
-            )]),
-            custom_chains: None,
-        },
-    );
-    let port = portpicker::pick_unused_port().expect("No ports free");
-    eprintln!("[debug] Using port: {}", port);
-    let config = Config {
-        general: GeneralConfig {
-            enabled: true,
-            log_level: "info".to_string(),
-            rules_path: rules_path.clone(),
-        },
-        modules,
-        services: ServiceConfig {
-            rest: RestConfig {
-                enabled: true,
-                bind_address: "127.0.0.1".to_string(),
-                port,
-            },
-        },
-    };
-    let config_str = toml::to_string(&config).unwrap();
-    fs::write(&config_path, config_str).unwrap();
-    eprintln!("[debug] Config written");
-    let engine = Engine::new(config_path.to_str().unwrap()).unwrap();
+    fs::write(&chains_path, b"[]").unwrap();
+    fs::write(&rules_path, b"[]").unwrap();
+    (chains_path, rules_path, config_path, chain_prefix, port)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_rest_api_add_list_delete_rule() {
+    eprintln!("[debug] test_rest_api_add_list_delete_rule running");
+    let (chains_path, rules_path, config_path, chain_prefix, port) = setup_test_paths();
+    let config_toml = TEST_CONFIG_TOML
+        .replace("{rules_path}", &rules_path)
+        .replace("{chains_path}", &chains_path)
+        .replace("{chain_prefix}", &chain_prefix)
+        .replace("{port}", &port.to_string());
+    fs::write(&config_path, config_toml).unwrap();
+    eprintln!("[debug] Config path: {}", config_path);
+    let engine = Engine::new(&config_path).unwrap();
     engine.register_all_modules().unwrap();
     let rest_service = RestService::new(engine.clone());
     let (shutdown_tx, shutdown_rx_server) = tokio::sync::oneshot::channel::<()>();
@@ -82,7 +47,6 @@ async fn test_rest_api_add_list_delete_rule() {
             eprintln!("[server error] REST service failed: {e:?}");
         }
     });
-    eprintln!("[debug] Server task spawned");
     let client = reqwest::Client::new();
     let base_url = format!("http://127.0.0.1:{}/api/filter/rules", port);
     // Wait for server
@@ -95,7 +59,6 @@ async fn test_rest_api_add_list_delete_rule() {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
     assert!(started, "REST API did not start in time");
-    eprintln!("[debug] REST API started");
     // Add a rule
     let rule_req = json!({
         "name": "api_test_rule",
@@ -103,30 +66,23 @@ async fn test_rest_api_add_list_delete_rule() {
         "action": "accept",
         "priority": 1
     });
-    eprintln!("[debug] Sending POST to add rule: {:?}", rule_req);
     let resp = client.post(&base_url).json(&rule_req).send().await.unwrap();
-    eprintln!("[debug] POST response: {:?}", resp);
     assert!(resp.status().is_success());
     // List rules
-    eprintln!("[debug] Listing rules...");
     let resp = client.get(&base_url).send().await.unwrap();
     assert!(resp.status().is_success());
     let rules: Vec<serde_json::Value> = resp.json().await.unwrap();
-    eprintln!("[debug] Rules: {:?}", rules);
     assert!(rules.iter().any(|r| r["name"] == "api_test_rule"));
     // Delete the rule
     let rule_id = rules.iter().find(|r| r["name"] == "api_test_rule").unwrap()["id"]
         .as_str()
         .unwrap();
-    eprintln!("[debug] Deleting rule with id: {}", rule_id);
     let delete_url = format!("{}/{}", base_url, rule_id);
     let resp = client.delete(&delete_url).send().await.unwrap();
-    eprintln!("[debug] DELETE response: {:?}", resp);
     assert!(resp.status().is_success());
     // List rules again
     let resp = client.get(&base_url).send().await.unwrap();
     let rules: Vec<serde_json::Value> = resp.json().await.unwrap();
-    eprintln!("[debug] Rules after deletion: {:?}", rules);
     assert!(!rules.iter().any(|r| r["name"] == "api_test_rule"));
     // Shutdown
     let _ = shutdown_tx.send(());
@@ -139,57 +95,15 @@ async fn test_rest_api_add_list_delete_rule() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_rest_api_add_rule_invalid_data() {
     eprintln!("[debug] test_rest_api_add_rule_invalid_data running");
-    let rules_file = NamedTempFile::new().unwrap();
-    let rules_path = rules_file.path().to_str().unwrap().to_string();
-    std::fs::write(&rules_path, b"[]").unwrap();
-    let tmp_dir = env::temp_dir();
-    let config_path: PathBuf = tmp_dir.join(format!("test_config_{}.toml", uuid::Uuid::new_v4()));
-    let chain_prefix = format!(
-        "FORTEXA_TST_{}",
-        &uuid::Uuid::new_v4().simple().to_string()[..8]
-    );
-    let mut modules = HashMap::new();
-    modules.insert(
-        "iptables".to_string(),
-        ModuleConfig {
-            enabled: true,
-            settings: HashMap::from([(
-                "chain_prefix".to_string(),
-                serde_json::Value::String(chain_prefix.clone()),
-            )]),
-            custom_chains: None,
-        },
-    );
-    modules.insert(
-        "logging".to_string(),
-        ModuleConfig {
-            enabled: true,
-            settings: HashMap::from([(
-                "log_file".to_string(),
-                serde_json::Value::String("/tmp/test_fw.log".to_string()),
-            )]),
-            custom_chains: None,
-        },
-    );
-    let port = portpicker::pick_unused_port().expect("No ports free");
-    let config = Config {
-        general: GeneralConfig {
-            enabled: true,
-            log_level: "info".to_string(),
-            rules_path: rules_path.clone(),
-        },
-        modules,
-        services: ServiceConfig {
-            rest: RestConfig {
-                enabled: true,
-                bind_address: "127.0.0.1".to_string(),
-                port,
-            },
-        },
-    };
-    let config_str = toml::to_string(&config).unwrap();
-    fs::write(&config_path, config_str).unwrap();
-    let engine = Engine::new(config_path.to_str().unwrap()).unwrap();
+    let (chains_path, rules_path, config_path, chain_prefix, port) = setup_test_paths();
+    let config_toml = TEST_CONFIG_TOML
+        .replace("{rules_path}", &rules_path)
+        .replace("{chains_path}", &chains_path)
+        .replace("{chain_prefix}", &chain_prefix)
+        .replace("{port}", &port.to_string());
+    fs::write(&config_path, config_toml).unwrap();
+    eprintln!("[debug] Config path: {}", config_path);
+    let engine = Engine::new(&config_path).unwrap();
     engine.register_all_modules().unwrap();
     let rest_service = RestService::new(engine.clone());
     let (shutdown_tx, shutdown_rx_server) = tokio::sync::oneshot::channel::<()>();
@@ -244,57 +158,15 @@ async fn test_rest_api_add_rule_invalid_data() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_rest_api_get_nonexistent_rule() {
     eprintln!("[debug] test_rest_api_get_nonexistent_rule running");
-    let rules_file = NamedTempFile::new().unwrap();
-    let rules_path = rules_file.path().to_str().unwrap().to_string();
-    std::fs::write(&rules_path, b"[]").unwrap();
-    let tmp_dir = env::temp_dir();
-    let config_path: PathBuf = tmp_dir.join(format!("test_config_{}.toml", uuid::Uuid::new_v4()));
-    let chain_prefix = format!(
-        "FORTEXA_TST_{}",
-        &uuid::Uuid::new_v4().simple().to_string()[..8]
-    );
-    let mut modules = HashMap::new();
-    modules.insert(
-        "iptables".to_string(),
-        ModuleConfig {
-            enabled: true,
-            settings: HashMap::from([(
-                "chain_prefix".to_string(),
-                serde_json::Value::String(chain_prefix.clone()),
-            )]),
-            custom_chains: None,
-        },
-    );
-    modules.insert(
-        "logging".to_string(),
-        ModuleConfig {
-            enabled: true,
-            settings: HashMap::from([(
-                "log_file".to_string(),
-                serde_json::Value::String("/tmp/test_fw.log".to_string()),
-            )]),
-            custom_chains: None,
-        },
-    );
-    let port = portpicker::pick_unused_port().expect("No ports free");
-    let config = Config {
-        general: GeneralConfig {
-            enabled: true,
-            log_level: "info".to_string(),
-            rules_path: rules_path.clone(),
-        },
-        modules,
-        services: ServiceConfig {
-            rest: RestConfig {
-                enabled: true,
-                bind_address: "127.0.0.1".to_string(),
-                port,
-            },
-        },
-    };
-    let config_str = toml::to_string(&config).unwrap();
-    fs::write(&config_path, config_str).unwrap();
-    let engine = Engine::new(config_path.to_str().unwrap()).unwrap();
+    let (chains_path, rules_path, config_path, chain_prefix, port) = setup_test_paths();
+    let config_toml = TEST_CONFIG_TOML
+        .replace("{rules_path}", &rules_path)
+        .replace("{chains_path}", &chains_path)
+        .replace("{chain_prefix}", &chain_prefix)
+        .replace("{port}", &port.to_string());
+    fs::write(&config_path, config_toml).unwrap();
+    eprintln!("[debug] Config path: {}", config_path);
+    let engine = Engine::new(&config_path).unwrap();
     engine.register_all_modules().unwrap();
     let rest_service = RestService::new(engine.clone());
     let (shutdown_tx, shutdown_rx_server) = tokio::sync::oneshot::channel::<()>();
@@ -338,57 +210,15 @@ async fn test_rest_api_get_nonexistent_rule() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_rest_api_update_rule() {
     eprintln!("[debug] test_rest_api_update_rule running");
-    let rules_file = NamedTempFile::new().unwrap();
-    let rules_path = rules_file.path().to_str().unwrap().to_string();
-    std::fs::write(&rules_path, b"[]").unwrap();
-    let tmp_dir = env::temp_dir();
-    let config_path: PathBuf = tmp_dir.join(format!("test_config_{}.toml", uuid::Uuid::new_v4()));
-    let chain_prefix = format!(
-        "FORTEXA_TST_{}",
-        &uuid::Uuid::new_v4().simple().to_string()[..8]
-    );
-    let mut modules = HashMap::new();
-    modules.insert(
-        "iptables".to_string(),
-        ModuleConfig {
-            enabled: true,
-            settings: HashMap::from([(
-                "chain_prefix".to_string(),
-                serde_json::Value::String(chain_prefix.clone()),
-            )]),
-            custom_chains: None,
-        },
-    );
-    modules.insert(
-        "logging".to_string(),
-        ModuleConfig {
-            enabled: true,
-            settings: HashMap::from([(
-                "log_file".to_string(),
-                serde_json::Value::String("/tmp/test_fw.log".to_string()),
-            )]),
-            custom_chains: None,
-        },
-    );
-    let port = portpicker::pick_unused_port().expect("No ports free");
-    let config = Config {
-        general: GeneralConfig {
-            enabled: true,
-            log_level: "info".to_string(),
-            rules_path: rules_path.clone(),
-        },
-        modules,
-        services: ServiceConfig {
-            rest: RestConfig {
-                enabled: true,
-                bind_address: "127.0.0.1".to_string(),
-                port,
-            },
-        },
-    };
-    let config_str = toml::to_string(&config).unwrap();
-    fs::write(&config_path, config_str).unwrap();
-    let engine = Engine::new(config_path.to_str().unwrap()).unwrap();
+    let (chains_path, rules_path, config_path, chain_prefix, port) = setup_test_paths();
+    let config_toml = TEST_CONFIG_TOML
+        .replace("{rules_path}", &rules_path)
+        .replace("{chains_path}", &chains_path)
+        .replace("{chain_prefix}", &chain_prefix)
+        .replace("{port}", &port.to_string());
+    fs::write(&config_path, config_toml).unwrap();
+    eprintln!("[debug] Config path: {}", config_path);
+    let engine = Engine::new(&config_path).unwrap();
     engine.register_all_modules().unwrap();
     let rest_service = RestService::new(engine.clone());
     let (shutdown_tx, shutdown_rx_server) = tokio::sync::oneshot::channel::<()>();
@@ -466,57 +296,15 @@ async fn test_rest_api_update_rule() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_rest_api_reset_all_rules() {
     eprintln!("[debug] test_rest_api_reset_all_rules running");
-    let rules_file = NamedTempFile::new().unwrap();
-    let rules_path = rules_file.path().to_str().unwrap().to_string();
-    std::fs::write(&rules_path, b"[]").unwrap();
-    let tmp_dir = env::temp_dir();
-    let config_path: PathBuf = tmp_dir.join(format!("test_config_{}.toml", uuid::Uuid::new_v4()));
-    let chain_prefix = format!(
-        "FORTEXA_TST_{}",
-        &uuid::Uuid::new_v4().simple().to_string()[..8]
-    );
-    let mut modules = HashMap::new();
-    modules.insert(
-        "iptables".to_string(),
-        ModuleConfig {
-            enabled: true,
-            settings: HashMap::from([(
-                "chain_prefix".to_string(),
-                serde_json::Value::String(chain_prefix.clone()),
-            )]),
-            custom_chains: None,
-        },
-    );
-    modules.insert(
-        "logging".to_string(),
-        ModuleConfig {
-            enabled: true,
-            settings: HashMap::from([(
-                "log_file".to_string(),
-                serde_json::Value::String("/tmp/test_fw.log".to_string()),
-            )]),
-            custom_chains: None,
-        },
-    );
-    let port = portpicker::pick_unused_port().expect("No ports free");
-    let config = Config {
-        general: GeneralConfig {
-            enabled: true,
-            log_level: "info".to_string(),
-            rules_path: rules_path.clone(),
-        },
-        modules,
-        services: ServiceConfig {
-            rest: RestConfig {
-                enabled: true,
-                bind_address: "127.0.0.1".to_string(),
-                port,
-            },
-        },
-    };
-    let config_str = toml::to_string(&config).unwrap();
-    fs::write(&config_path, config_str).unwrap();
-    let engine = Engine::new(config_path.to_str().unwrap()).unwrap();
+    let (chains_path, rules_path, config_path, chain_prefix, port) = setup_test_paths();
+    let config_toml = TEST_CONFIG_TOML
+        .replace("{rules_path}", &rules_path)
+        .replace("{chains_path}", &chains_path)
+        .replace("{chain_prefix}", &chain_prefix)
+        .replace("{port}", &port.to_string());
+    fs::write(&config_path, config_toml).unwrap();
+    eprintln!("[debug] Config path: {}", config_path);
+    let engine = Engine::new(&config_path).unwrap();
     engine.register_all_modules().unwrap();
     let rest_service = RestService::new(engine.clone());
     let (shutdown_tx, shutdown_rx_server) = tokio::sync::oneshot::channel::<()>();
@@ -577,4 +365,101 @@ async fn test_rest_api_reset_all_rules() {
     // Cleanup iptables chains
     cleanup_test_chains(&chain_prefix);
     eprintln!("[debug] test_rest_api_reset_all_rules completed");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_rest_api_create_custom_chain() {
+    eprintln!("[debug] test_rest_api_create_custom_chain running");
+    let (chains_path, rules_path, config_path, chain_prefix, port) = setup_test_paths();
+    let config_toml = TEST_CONFIG_TOML
+        .replace("{rules_path}", &rules_path)
+        .replace("{chains_path}", &chains_path)
+        .replace("{chain_prefix}", &chain_prefix)
+        .replace("{port}", &port.to_string());
+    std::fs::write(&config_path, config_toml).unwrap();
+    std::fs::write(&chains_path, b"[]").unwrap();
+
+    let engine = Engine::new(&config_path).unwrap();
+    let rest_service = RestService::new(engine.clone());
+    let _server = tokio::spawn(async move {
+        rest_service
+            .run(Box::pin(async {
+                std::future::pending::<()>().await;
+            }))
+            .await
+            .unwrap();
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    let client = reqwest::Client::new();
+    let url = format!("http://127.0.0.1:{}/api/filter/custom_chain", port);
+    let chain_name = format!("{}_MYCHAIN", chain_prefix);
+    let body = serde_json::json!({
+        "name": chain_name,
+        "reference_from": "INPUT"
+    });
+    let resp = client.post(&url).json(&body).send().await.unwrap();
+    assert!(resp.status().is_success());
+    eprintln!("[debug] Custom chain created via API");
+
+    // Wait for the server to update the chains file
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    // Check that the chain is in the chains file
+    let chains_data = std::fs::read_to_string(&chains_path).unwrap();
+    assert!(chains_data.contains("MYCHAIN"));
+    eprintln!("[debug] Custom chain found in chains file");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_rest_api_delete_custom_chain() {
+    eprintln!("[debug] test_rest_api_delete_custom_chain running");
+    let (chains_path, rules_path, config_path, chain_prefix, port) = setup_test_paths();
+    let config_toml = TEST_CONFIG_TOML
+        .replace("{rules_path}", &rules_path)
+        .replace("{chains_path}", &chains_path)
+        .replace("{chain_prefix}", &chain_prefix)
+        .replace("{port}", &port.to_string());
+    std::fs::write(&config_path, config_toml).unwrap();
+    std::fs::write(&chains_path, b"[]").unwrap();
+
+    let engine = Engine::new(&config_path).unwrap();
+    let rest_service = RestService::new(engine.clone());
+    let _server = tokio::spawn(async move {
+        rest_service
+            .run(Box::pin(async {
+                std::future::pending::<()>().await;
+            }))
+            .await
+            .unwrap();
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    let client = reqwest::Client::new();
+    let url = format!("http://127.0.0.1:{}/api/filter/custom_chain", port);
+    let chain_name = format!("{}_MYCHAIN", chain_prefix);
+    let body = serde_json::json!({
+        "name": chain_name,
+        "reference_from": "INPUT"
+    });
+    // First, create the chain via API
+    let resp = client.post(&url).json(&body).send().await.unwrap();
+    assert!(resp.status().is_success());
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let chains_data = std::fs::read_to_string(&chains_path).unwrap();
+    assert!(chains_data.contains("MYCHAIN"));
+    // Now, delete the custom chain via the API
+    let resp = client
+        .delete(&url)
+        .json(&serde_json::json!({ "name": chain_name, "reference_from": "INPUT" }))
+        .send()
+        .await
+        .unwrap();
+    assert!(resp.status().is_success());
+    eprintln!("[debug] Custom chain deleted via API");
+    // Wait for the server to update the chains file
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    // Check that the chain is no longer in the chains file
+    let chains_data = std::fs::read_to_string(&chains_path).unwrap();
+    assert!(!chains_data.contains("MYCHAIN"));
+    eprintln!("[debug] Custom chain removed from chains file");
 }

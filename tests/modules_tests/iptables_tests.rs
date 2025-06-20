@@ -1,9 +1,9 @@
 use crate::common::iptables::cleanup_test_chains;
 use fortexa::core::rules::{Action, Direction, Rule, RulesManager};
 use fortexa::modules::iptables::IptablesFilter;
+use serde_json;
 use std::io::Write;
 use tempfile::NamedTempFile;
-use serde_json;
 
 #[test]
 fn test_iptables_chain_creation() {
@@ -48,25 +48,52 @@ fn test_custom_chain_creation_and_deletion() {
         "FORTEXA_TST_{}",
         &uuid::Uuid::new_v4().simple().to_string()[..8]
     );
-    eprintln!("[debug] [test_custom_chain_creation_and_deletion] Generated chain prefix: {}", chain_prefix);
+    eprintln!(
+        "[debug] [test_custom_chain_creation_and_deletion] Generated chain prefix: {}",
+        chain_prefix
+    );
     let custom_chain = format!("{}_MYCHAIN", chain_prefix);
-    eprintln!("[debug] [test_custom_chain_creation_and_deletion] Custom chain name: {}", custom_chain);
+    eprintln!(
+        "[debug] [test_custom_chain_creation_and_deletion] Custom chain name: {}",
+        custom_chain
+    );
     let builtin_chain = "INPUT";
-    eprintln!("[debug] [test_custom_chain_creation_and_deletion] Builtin chain: {}", builtin_chain);
+    eprintln!(
+        "[debug] [test_custom_chain_creation_and_deletion] Builtin chain: {}",
+        builtin_chain
+    );
     let filter = IptablesFilter::new(&chain_prefix).unwrap();
     eprintln!("[debug] [test_custom_chain_creation_and_deletion] IptablesFilter initialized");
     // Create custom chain
-    filter.create_custom_chain(&custom_chain, Some(builtin_chain)).unwrap();
-    eprintln!("[debug] [test_custom_chain_creation_and_deletion] Custom chain created: {}", custom_chain);
+    filter
+        .create_custom_chain(&custom_chain, Some(builtin_chain))
+        .unwrap();
+    eprintln!(
+        "[debug] [test_custom_chain_creation_and_deletion] Custom chain created: {}",
+        custom_chain
+    );
     // Try creating again (should be idempotent)
-    filter.create_custom_chain(&custom_chain, Some(builtin_chain)).unwrap();
-    eprintln!("[debug] [test_custom_chain_creation_and_deletion] Custom chain creation is idempotent");
+    filter
+        .create_custom_chain(&custom_chain, Some(builtin_chain))
+        .unwrap();
+    eprintln!(
+        "[debug] [test_custom_chain_creation_and_deletion] Custom chain creation is idempotent"
+    );
     // Delete custom chain
-    filter.delete_custom_chain(&custom_chain, Some(builtin_chain)).unwrap();
-    eprintln!("[debug] [test_custom_chain_creation_and_deletion] Custom chain deleted: {}", custom_chain);
+    filter
+        .delete_custom_chain(&custom_chain, Some(builtin_chain))
+        .unwrap();
+    eprintln!(
+        "[debug] [test_custom_chain_creation_and_deletion] Custom chain deleted: {}",
+        custom_chain
+    );
     // Try deleting again (should not panic)
-    filter.delete_custom_chain(&custom_chain, Some(builtin_chain)).unwrap();
-    eprintln!("[debug] [test_custom_chain_creation_and_deletion] Custom chain deletion is idempotent");
+    filter
+        .delete_custom_chain(&custom_chain, Some(builtin_chain))
+        .unwrap();
+    eprintln!(
+        "[debug] [test_custom_chain_creation_and_deletion] Custom chain deletion is idempotent"
+    );
     // Cleanup all test chains
     crate::common::iptables::cleanup_test_chains(&chain_prefix);
     eprintln!("[debug] [test_custom_chain_creation_and_deletion] cleanup_test_chains() called");
@@ -83,11 +110,20 @@ fn test_apply_custom_chains_from_file() {
         "FORTEXA_TST_{}",
         &uuid::Uuid::new_v4().simple().to_string()[..8]
     );
-    eprintln!("[debug] [test_apply_custom_chains_from_file] Generated chain prefix: {}", chain_prefix);
+    eprintln!(
+        "[debug] [test_apply_custom_chains_from_file] Generated chain prefix: {}",
+        chain_prefix
+    );
     let custom_chain = format!("{}_MYCHAIN", chain_prefix);
-    eprintln!("[debug] [test_apply_custom_chains_from_file] Custom chain name: {}", custom_chain);
+    eprintln!(
+        "[debug] [test_apply_custom_chains_from_file] Custom chain name: {}",
+        custom_chain
+    );
     let builtin_chain = "INPUT";
-    eprintln!("[debug] [test_apply_custom_chains_from_file] Builtin chain: {}", builtin_chain);
+    eprintln!(
+        "[debug] [test_apply_custom_chains_from_file] Builtin chain: {}",
+        builtin_chain
+    );
     // Write a chains.json file with one custom chain entry
     let entry = CustomChainEntry {
         name: custom_chain.clone(),
@@ -96,15 +132,23 @@ fn test_apply_custom_chains_from_file() {
     let chains = vec![entry.clone()];
     let tmpfile = NamedTempFile::new().unwrap();
     let chains_path = tmpfile.path().to_str().unwrap().to_string();
-    eprintln!("[debug] [test_apply_custom_chains_from_file] Temporary chains.json path: {}", chains_path);
+    eprintln!(
+        "[debug] [test_apply_custom_chains_from_file] Temporary chains.json path: {}",
+        chains_path
+    );
     fs::write(&chains_path, serde_json::to_string(&chains).unwrap()).unwrap();
-    eprintln!("[debug] [test_apply_custom_chains_from_file] chains.json written: {}", chains_path);
+    eprintln!(
+        "[debug] [test_apply_custom_chains_from_file] chains.json written: {}",
+        chains_path
+    );
     // Apply custom chains from file
     IptablesFilter::apply_custom_chains_from_file(&chains_path).unwrap();
     eprintln!("[debug] [test_apply_custom_chains_from_file] apply_custom_chains_from_file called");
     // Try again (should be idempotent)
     IptablesFilter::apply_custom_chains_from_file(&chains_path).unwrap();
-    eprintln!("[debug] [test_apply_custom_chains_from_file] apply_custom_chains_from_file is idempotent");
+    eprintln!(
+        "[debug] [test_apply_custom_chains_from_file] apply_custom_chains_from_file is idempotent"
+    );
     // Cleanup all test chains
     crate::common::iptables::cleanup_test_chains(&chain_prefix);
     eprintln!("[debug] [test_apply_custom_chains_from_file] cleanup_test_chains() called");

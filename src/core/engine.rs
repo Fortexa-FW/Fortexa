@@ -2,9 +2,9 @@ use anyhow::Result;
 use log::{debug, info};
 use std::fs;
 use std::fs::File;
-use std::sync::{Arc, Mutex};
-use std::path::Path;
 use std::io::Write;
+use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 use crate::core::config::Config;
 use crate::core::rules::{Rule, RulesManager};
@@ -179,7 +179,10 @@ impl Engine {
             if let Some(module) = module_manager.get_module(&module_name) {
                 if module_name == "iptables" {
                     // Downcast to IptablesModule
-                    if let Some(iptables) = module.as_any().downcast_ref::<crate::modules::iptables::IptablesModule>() {
+                    if let Some(iptables) = module
+                        .as_any()
+                        .downcast_ref::<crate::modules::iptables::IptablesModule>()
+                    {
                         iptables.apply_rules_with_auto_create(&rules, auto_create_chain)?;
                         continue;
                     }
@@ -199,7 +202,10 @@ impl Engine {
             if let Some(module) = module_manager.get_module(&module_name) {
                 if module_name == "iptables" {
                     // Downcast to IptablesModule
-                    if let Some(iptables) = module.as_any().downcast_ref::<crate::modules::iptables::IptablesModule>() {
+                    if let Some(iptables) = module
+                        .as_any()
+                        .downcast_ref::<crate::modules::iptables::IptablesModule>()
+                    {
                         iptables.apply_rules_with_auto_create(&rules, auto_create_chain)?;
                         continue;
                     }

@@ -1,11 +1,10 @@
 mod common;
+use crate::common::TEST_CONFIG_TOML;
 use crate::common::iptables::cleanup_test_chains;
-use fortexa::core::config::{Config, GeneralConfig, ModuleConfig, RestConfig, ServiceConfig};
 use fortexa::core::engine::Engine;
 use fortexa::core::rules::{Action, Direction, Rule};
 use fortexa::services::rest::RestService;
 use portpicker;
-use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -17,52 +16,22 @@ async fn test_engine_end_to_end() {
     let rules_file = NamedTempFile::new().unwrap();
     let rules_path = rules_file.path().to_str().unwrap().to_string();
     std::fs::write(&rules_path, b"[]").unwrap();
+    let chains_file = NamedTempFile::new().unwrap();
+    let chains_path = chains_file.path().to_str().unwrap().to_string();
+    std::fs::write(&chains_path, b"[]").unwrap();
     let tmp_dir = env::temp_dir();
     let config_path: PathBuf = tmp_dir.join(format!("test_config_{}.toml", uuid::Uuid::new_v4()));
     let chain_prefix = format!(
         "FORTEXA_TST_{}",
         &uuid::Uuid::new_v4().simple().to_string()[..8]
     );
-    let mut modules = HashMap::new();
-    modules.insert(
-        "iptables".to_string(),
-        ModuleConfig {
-            enabled: true,
-            settings: HashMap::from([(
-                "chain_prefix".to_string(),
-                serde_json::Value::String(chain_prefix.clone()),
-            )]),
-            custom_chains: None,
-        },
-    );
-    modules.insert(
-        "logging".to_string(),
-        ModuleConfig {
-            enabled: true,
-            settings: HashMap::from([(
-                "log_file".to_string(),
-                serde_json::Value::String("/tmp/test_fw.log".to_string()),
-            )]),
-            custom_chains: None,
-        },
-    );
-    let config = Config {
-        general: GeneralConfig {
-            enabled: true,
-            log_level: "info".to_string(),
-            rules_path: rules_path.clone(),
-        },
-        modules,
-        services: ServiceConfig {
-            rest: RestConfig {
-                enabled: false,
-                bind_address: "127.0.0.1".to_string(),
-                port: 8080,
-            },
-        },
-    };
-    let config_str = toml::to_string(&config).unwrap();
-    fs::write(&config_path, config_str).unwrap();
+    let port = portpicker::pick_unused_port().expect("No ports free");
+    let config_toml = TEST_CONFIG_TOML
+        .replace("{rules_path}", &rules_path)
+        .replace("{chains_path}", &chains_path)
+        .replace("{chain_prefix}", &chain_prefix)
+        .replace("{port}", &port.to_string());
+    fs::write(&config_path, config_toml).unwrap();
     eprintln!("[test] config_path: {}", config_path.to_str().unwrap());
     eprintln!("[test] rules_path: {}", rules_path);
     let engine = match Engine::new(config_path.to_str().unwrap()) {
@@ -92,57 +61,23 @@ async fn test_rest_api_end_to_end() {
     let rules_file = NamedTempFile::new().unwrap();
     let rules_path = rules_file.path().to_str().unwrap().to_string();
     std::fs::write(&rules_path, b"[]").unwrap();
+    let chains_file = NamedTempFile::new().unwrap();
+    let chains_path = chains_file.path().to_str().unwrap().to_string();
+    std::fs::write(&chains_path, b"[]").unwrap();
     let tmp_dir = env::temp_dir();
     let config_path: PathBuf = tmp_dir.join(format!("test_config_{}.toml", uuid::Uuid::new_v4()));
     let chain_prefix = format!(
         "FORTEXA_TST_{}",
         &uuid::Uuid::new_v4().simple().to_string()[..8]
     );
-    let mut modules = HashMap::new();
-    modules.insert(
-        "iptables".to_string(),
-        ModuleConfig {
-            enabled: true,
-            settings: HashMap::from([(
-                "chain_prefix".to_string(),
-                serde_json::Value::String(chain_prefix.clone()),
-            )]),
-            custom_chains: None,
-        },
-    );
-    modules.insert(
-        "logging".to_string(),
-        ModuleConfig {
-            enabled: true,
-            settings: HashMap::from([(
-                "log_file".to_string(),
-                serde_json::Value::String("/tmp/test_fw.log".to_string()),
-            )]),
-            custom_chains: None,
-        },
-    );
     let port = portpicker::pick_unused_port().expect("No ports free");
-    let config = Config {
-        general: GeneralConfig {
-            enabled: true,
-            log_level: "info".to_string(),
-            rules_path: rules_path.clone(),
-        },
-        modules,
-        services: ServiceConfig {
-            rest: RestConfig {
-                enabled: true,
-                bind_address: "127.0.0.1".to_string(),
-                port,
-            },
-        },
-    };
-    let config_str = toml::to_string(&config).unwrap();
-    fs::write(&config_path, config_str).unwrap();
-    eprintln!(
-        "[test] Starting REST server on port {}",
-        config.services.rest.port
-    );
+    let config_toml = TEST_CONFIG_TOML
+        .replace("{rules_path}", &rules_path)
+        .replace("{chains_path}", &chains_path)
+        .replace("{chain_prefix}", &chain_prefix)
+        .replace("{port}", &port.to_string());
+    fs::write(&config_path, config_toml).unwrap();
+    eprintln!("[test] Starting REST server on port {}", port);
     eprintln!("[test] About to spawn REST server task");
     let engine = Engine::new(config_path.to_str().unwrap()).unwrap();
     engine.register_all_modules().unwrap();
@@ -161,7 +96,7 @@ async fn test_rest_api_end_to_end() {
     });
     eprintln!("[test] Server task spawned");
     let client = reqwest::Client::new();
-    let base_url = format!("http://127.0.0.1:{}/api/filter/rules", config.services.rest.port);
+    let base_url = format!("http://127.0.0.1:{}/api/filter/rules", port);
     let mut started = false;
     for i in 0..50 {
         match client.get(base_url.as_str()).send().await {

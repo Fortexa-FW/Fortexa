@@ -127,7 +127,10 @@ impl RestService {
             .route("/api/filter/rules/{id}", put(Self::update_rule))
             .route("/api/filter/rules/{id}", delete(Self::delete_rule))
             .route("/api/filter/custom_chain", post(Self::create_custom_chain))
-            .route("/api/filter/custom_chain", delete(Self::delete_custom_chain))
+            .route(
+                "/api/filter/custom_chain",
+                delete(Self::delete_custom_chain),
+            )
             .layer(TraceLayer::new_for_http())
             .with_state(Arc::new(self.engine));
         axum::serve(listener, app)
@@ -184,7 +187,8 @@ impl RestService {
                 return (
                     StatusCode::BAD_REQUEST,
                     Json(ErrorResponse { message: msg }),
-                ).into_response();
+                )
+                    .into_response();
             }
         };
         match engine.add_rule_with_auto_create(rule, auto_create_chain) {
@@ -234,8 +238,11 @@ impl RestService {
             Err(e) => {
                 return (
                     StatusCode::NOT_FOUND,
-                    Json(ErrorResponse { message: e.to_string() }),
-                ).into_response();
+                    Json(ErrorResponse {
+                        message: e.to_string(),
+                    }),
+                )
+                    .into_response();
             }
         };
         let new_rule = match rule_from_request(&rule_req) {
@@ -244,7 +251,8 @@ impl RestService {
                 return (
                     StatusCode::BAD_REQUEST,
                     Json(ErrorResponse { message: msg }),
-                ).into_response();
+                )
+                    .into_response();
             }
         };
         // Overwrite all fields except id
@@ -300,10 +308,18 @@ impl RestService {
         Json(req): Json<CustomChainRequest>,
     ) -> impl IntoResponse {
         let config = engine.get_config();
-        let prefix = config.modules.get("iptables")
+        let prefix = config
+            .modules
+            .get("iptables")
             .and_then(|m| m.settings.get("chain_prefix"))
             .and_then(|v| v.as_str())
             .unwrap_or("FORTEXA");
+        let chains_path = config
+            .modules
+            .get("iptables")
+            .and_then(|m| m.settings.get("chains_path"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("/var/lib/fortexa/chains.json");
         let chain_name = if req.name.starts_with(prefix) {
             req.name.clone()
         } else {
@@ -311,19 +327,39 @@ impl RestService {
         };
         let filter = match crate::modules::iptables::IptablesFilter::new(prefix) {
             Ok(f) => f,
-            Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))).into_response(),
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": e.to_string()})),
+                )
+                    .into_response();
+            }
         };
         let ref_from = req.reference_from.as_deref();
         match filter.create_custom_chain(&chain_name, ref_from) {
             Ok(_) => {
                 // Add to chains.json
-                let entry = CustomChainEntry { name: chain_name.clone(), reference_from: req.reference_from.clone() };
-                if let Err(e) = crate::modules::iptables::filter::IptablesFilter::add_chain_to_file("/var/lib/fortexa/chains.json", &entry) {
+                let entry = CustomChainEntry {
+                    name: chain_name.clone(),
+                    reference_from: req.reference_from.clone(),
+                };
+                if let Err(e) = crate::modules::iptables::filter::IptablesFilter::add_chain_to_file(
+                    chains_path,
+                    &entry,
+                ) {
                     error!("Failed to update chains.json: {}", e);
                 }
-                (StatusCode::CREATED, Json(json!({"success": true, "chain": chain_name}))).into_response()
-            },
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))).into_response(),
+                (
+                    StatusCode::CREATED,
+                    Json(json!({"success": true, "chain": chain_name})),
+                )
+                    .into_response()
+            }
+            Err(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": e.to_string()})),
+            )
+                .into_response(),
         }
     }
 
@@ -333,10 +369,18 @@ impl RestService {
         Json(req): Json<CustomChainRequest>,
     ) -> impl IntoResponse {
         let config = engine.get_config();
-        let prefix = config.modules.get("iptables")
+        let prefix = config
+            .modules
+            .get("iptables")
             .and_then(|m| m.settings.get("chain_prefix"))
             .and_then(|v| v.as_str())
             .unwrap_or("FORTEXA");
+        let chains_path = config
+            .modules
+            .get("iptables")
+            .and_then(|m| m.settings.get("chains_path"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("/var/lib/fortexa/chains.json");
         let chain_name = if req.name.starts_with(prefix) {
             req.name.clone()
         } else {
@@ -344,18 +388,37 @@ impl RestService {
         };
         let filter = match crate::modules::iptables::IptablesFilter::new(prefix) {
             Ok(f) => f,
-            Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))).into_response(),
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": e.to_string()})),
+                )
+                    .into_response();
+            }
         };
         let ref_from = req.reference_from.as_deref();
         match filter.delete_custom_chain(&chain_name, ref_from) {
             Ok(_) => {
                 // Remove from chains.json
-                if let Err(e) = crate::modules::iptables::filter::IptablesFilter::remove_chain_from_file("/var/lib/fortexa/chains.json", &chain_name) {
+                if let Err(e) =
+                    crate::modules::iptables::filter::IptablesFilter::remove_chain_from_file(
+                        chains_path,
+                        &chain_name,
+                    )
+                {
                     error!("Failed to update chains.json: {}", e);
                 }
-                (StatusCode::OK, Json(json!({"success": true, "chain": chain_name}))).into_response()
-            },
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))).into_response(),
+                (
+                    StatusCode::OK,
+                    Json(json!({"success": true, "chain": chain_name})),
+                )
+                    .into_response()
+            }
+            Err(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": e.to_string()})),
+            )
+                .into_response(),
         }
     }
 }
