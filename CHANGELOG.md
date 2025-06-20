@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Refactor the first code wrap to get things more readable
+- Change all the tests to match code refactor and architecture
+
 ### Added
 
 - Implement use of iptables to block IP and/or ports
@@ -20,9 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add documentation for API
 - Add new API endpoints
 - Add reset endpoint to clear iptables only
-- New templates for issues (bug_report, documentation, enhancement, features)
+- New templates for issues (bug\_report, documentation, enhancement, features)
 - New DEVELOPMENT.md file for guidelines
 - Pull request templates
 - Refactor the code to get something more agnostic
 - Split files into differents modules
 - Build units and integrations tests
+- Add default config.toml content 
