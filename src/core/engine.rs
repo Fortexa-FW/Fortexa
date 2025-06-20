@@ -1,12 +1,36 @@
 use anyhow::Result;
 use log::{debug, info};
+use std::fs;
+use std::fs::File;
 use std::sync::{Arc, Mutex};
+use std::path::Path;
+use std::io::Write;
 
 use crate::core::config::Config;
 use crate::core::rules::{Rule, RulesManager};
 use crate::modules::ModuleManager;
 use crate::modules::iptables::IptablesModule;
 use crate::modules::logging::LoggingModule;
+
+const DEFAULT_CONFIG: &str = r#"
+[general]
+enabled = true
+log_level = "info"
+rules_path = "/var/lib/fortexa/rules.json"
+
+[modules.iptables]
+enabled = true
+settings = { chain_prefix = "FORTEXA" }
+
+[modules.logging]
+enabled = true
+settings = { log_file = "/var/log/fortexa.log" }
+
+[services.rest]
+enabled = true
+bind_address = "127.0.0.1"
+port = 3000
+"#;
 
 /// The core firewall engine
 #[derive(Clone)]
@@ -24,6 +48,7 @@ pub struct Engine {
 impl Engine {
     /// Create a new engine
     pub fn new(config_path: &str) -> Result<Self> {
+        Self::ensure_config_exists(config_path)?;
         let config = Config::from_file(config_path)?;
         info!("[Engine::new] Loaded config from: {}", config_path);
         info!("[Engine::new] REST port: {}", config.services.rest.port);
@@ -37,6 +62,22 @@ impl Engine {
             rules_manager,
             module_manager,
         })
+    }
+
+    pub fn ensure_config_exists(config_path: &str) -> std::io::Result<()> {
+        let config_path = Path::new(config_path);
+        if !config_path.exists() {
+            if let Some(parent) = config_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            let mut file = File::create(config_path)?;
+            file.write_all(DEFAULT_CONFIG.as_bytes())?;
+            println!(
+                "Default config created at {}. Please review and edit as needed.",
+                config_path.display()
+            );
+        }
+        Ok(())
     }
 
     /// Register all modules

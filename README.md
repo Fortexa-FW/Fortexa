@@ -248,4 +248,19 @@ curl -X POST http://localhost:3000/iptables/rules/reset
 
 ---
 
+## Test Chain Cleanup (for Developers)
+
+If you run integration/system tests that create iptables chains with the prefix `FORTEXA_TST_`, you can clean up all test chains and rules with:
+
+```sh
+sudo iptables-save | grep -v 'FORTEXA_TST_.*' | sudo iptables-restore -w
+```
+
+**Important:**
+- Only run this command after all tests and after the REST API server is fully stopped.
+- Running this during server operation will break the firewall API and may cause 500 errors.
+- This command removes all chains and rules matching the test prefix, ensuring a clean state for future test runs.
+
+---
+
 **Happy firewalling!**

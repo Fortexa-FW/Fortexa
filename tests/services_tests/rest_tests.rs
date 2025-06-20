@@ -1,3 +1,4 @@
+use crate::common::iptables::cleanup_test_chains;
 use fortexa::core::config::{Config, GeneralConfig, ModuleConfig, RestConfig, ServiceConfig};
 use fortexa::core::engine::Engine;
 use fortexa::services::rest::RestService;
@@ -8,7 +9,6 @@ use std::env;
 use std::fs;
 use std::path::PathBuf;
 use tempfile::NamedTempFile;
-use crate::common::iptables::cleanup_test_chains;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_rest_api_add_list_delete_rule() {
@@ -20,7 +20,10 @@ async fn test_rest_api_add_list_delete_rule() {
     let tmp_dir = env::temp_dir();
     let config_path: PathBuf = tmp_dir.join(format!("test_config_{}.toml", uuid::Uuid::new_v4()));
     eprintln!("[debug] Config path: {}", config_path.display());
-    let chain_prefix = format!("FORTEXA_TST_{}", &uuid::Uuid::new_v4().simple().to_string()[..8]);
+    let chain_prefix = format!(
+        "FORTEXA_TST_{}",
+        &uuid::Uuid::new_v4().simple().to_string()[..8]
+    );
     eprintln!("[debug] Chain prefix: {}", chain_prefix);
     let mut modules = HashMap::new();
     modules.insert(
@@ -139,7 +142,10 @@ async fn test_rest_api_add_rule_invalid_data() {
     std::fs::write(&rules_path, b"[]").unwrap();
     let tmp_dir = env::temp_dir();
     let config_path: PathBuf = tmp_dir.join(format!("test_config_{}.toml", uuid::Uuid::new_v4()));
-    let chain_prefix = format!("FORTEXA_TST_{}", &uuid::Uuid::new_v4().simple().to_string()[..8]);
+    let chain_prefix = format!(
+        "FORTEXA_TST_{}",
+        &uuid::Uuid::new_v4().simple().to_string()[..8]
+    );
     let mut modules = HashMap::new();
     modules.insert(
         "iptables".to_string(),
@@ -239,7 +245,10 @@ async fn test_rest_api_get_nonexistent_rule() {
     std::fs::write(&rules_path, b"[]").unwrap();
     let tmp_dir = env::temp_dir();
     let config_path: PathBuf = tmp_dir.join(format!("test_config_{}.toml", uuid::Uuid::new_v4()));
-    let chain_prefix = format!("FORTEXA_TST_{}", &uuid::Uuid::new_v4().simple().to_string()[..8]);
+    let chain_prefix = format!(
+        "FORTEXA_TST_{}",
+        &uuid::Uuid::new_v4().simple().to_string()[..8]
+    );
     let mut modules = HashMap::new();
     modules.insert(
         "iptables".to_string(),
@@ -328,7 +337,10 @@ async fn test_rest_api_update_rule() {
     std::fs::write(&rules_path, b"[]").unwrap();
     let tmp_dir = env::temp_dir();
     let config_path: PathBuf = tmp_dir.join(format!("test_config_{}.toml", uuid::Uuid::new_v4()));
-    let chain_prefix = format!("FORTEXA_TST_{}", &uuid::Uuid::new_v4().simple().to_string()[..8]);
+    let chain_prefix = format!(
+        "FORTEXA_TST_{}",
+        &uuid::Uuid::new_v4().simple().to_string()[..8]
+    );
     let mut modules = HashMap::new();
     modules.insert(
         "iptables".to_string(),
@@ -451,7 +463,10 @@ async fn test_rest_api_reset_all_rules() {
     std::fs::write(&rules_path, b"[]").unwrap();
     let tmp_dir = env::temp_dir();
     let config_path: PathBuf = tmp_dir.join(format!("test_config_{}.toml", uuid::Uuid::new_v4()));
-    let chain_prefix = format!("FORTEXA_TST_{}", &uuid::Uuid::new_v4().simple().to_string()[..8]);
+    let chain_prefix = format!(
+        "FORTEXA_TST_{}",
+        &uuid::Uuid::new_v4().simple().to_string()[..8]
+    );
     let mut modules = HashMap::new();
     modules.insert(
         "iptables".to_string(),

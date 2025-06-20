@@ -1,13 +1,16 @@
+use crate::common::iptables::cleanup_test_chains;
 use fortexa::core::rules::{Action, Direction, Rule, RulesManager};
 use fortexa::modules::iptables::IptablesFilter;
 use std::io::Write;
 use tempfile::NamedTempFile;
-use crate::common::iptables::cleanup_test_chains;
 
 #[test]
 fn test_iptables_chain_creation() {
     eprintln!("[debug] test_iptables_chain_creation running");
-    let chain_prefix = format!("FORTEXA_TST_{}", &uuid::Uuid::new_v4().simple().to_string()[..8]);
+    let chain_prefix = format!(
+        "FORTEXA_TST_{}",
+        &uuid::Uuid::new_v4().simple().to_string()[..8]
+    );
     eprintln!("[debug] Generated chain prefix: {}", chain_prefix);
     let filter = IptablesFilter::new(&chain_prefix).unwrap();
     eprintln!("[debug] IptablesFilter initialized");

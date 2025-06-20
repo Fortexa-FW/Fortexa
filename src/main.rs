@@ -3,6 +3,8 @@ use fortexa::core::engine::Engine;
 use fortexa::services::rest::RestService;
 use log::info;
 
+const DEFAULT_CONFIG_PATH: &str = "/etc/fortexa/config.toml";
+
 #[tokio::main]
 async fn main() -> Result<()> {
     env_logger::init();
@@ -10,7 +12,7 @@ async fn main() -> Result<()> {
     info!("Fortexa Firewall starting...");
 
     // Initialize the engine
-    let engine = Engine::new("/etc/fortexa/config.toml")?;
+    let engine = Engine::new(DEFAULT_CONFIG_PATH)?;
 
     // Register all modules
     engine.register_all_modules()?;

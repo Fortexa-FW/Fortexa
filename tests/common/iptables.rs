@@ -17,7 +17,6 @@ pub fn cleanup_all_test_chains() {
     eprintln!("[debug] iptables bulk cleanup status: {:?}", status);
 }
 
-
 pub fn cleanup_test_chains(chain_prefix: &str) {
     let cmd = format!(
         "iptables-save | grep -v '{}' | iptables-restore -w",
