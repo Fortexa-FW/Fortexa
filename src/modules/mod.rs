@@ -15,6 +15,9 @@ pub trait Module: Send + Sync {
 
     /// Apply rules to the module
     fn apply_rules(&self, rules: &[Rule]) -> Result<()>;
+
+    /// For downcasting
+    fn as_any(&self) -> &dyn std::any::Any;
 }
 
 /// Module manager
@@ -46,5 +49,11 @@ impl ModuleManager {
     /// Get all module names
     pub fn get_module_names(&self) -> Vec<String> {
         self.modules.keys().cloned().collect()
+    }
+}
+
+impl Default for ModuleManager {
+    fn default() -> Self {
+        Self::new()
     }
 }

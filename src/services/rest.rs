@@ -1,21 +1,20 @@
 use anyhow::Result;
 use axum::{
+    Router,
     extract::{Json, Path, State},
     http::StatusCode,
     response::IntoResponse,
     routing::{delete, get, post, put},
-    Router,
 };
-use log::{error, info};
+use log::{debug, error, info};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tokio::net::TcpListener;
-use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_http::trace::TraceLayer;
 
 use crate::core::engine::Engine;
 use crate::core::rules::{Action, Direction, Rule};
+use crate::modules::iptables::filter::CustomChainEntry;
 
 /// REST service
 #[derive(Clone)]
@@ -32,40 +31,55 @@ struct ErrorResponse {
 }
 
 /// Rule request
-#[derive(Debug, Deserialize)]
-struct RuleRequest {
+#[derive(Debug, Deserialize, Clone)]
+pub struct RuleRequest {
     /// Rule name
-    name: String,
-    
+    pub name: String,
+
     /// Rule description
-    description: Option<String>,
-    
+    pub description: Option<String>,
+
     /// Rule direction
-    direction: String,
-    
-    /// Source IP address or network
-    source: Option<String>,
-    
+    pub direction: String,
+
+    /// Source IP address or network"""
+    pub source: Option<String>,
+
     /// Destination IP address or network
-    destination: Option<String>,
-    
+    pub destination: Option<String>,
+
     /// Source port or port range
-    source_port: Option<String>,
-    
+    pub source_port: Option<String>,
+
     /// Destination port or port range
-    destination_port: Option<String>,
-    
+    pub destination_port: Option<String>,
+
     /// Protocol (tcp, udp, icmp, etc.)
-    protocol: Option<String>,
-    
+    pub protocol: Option<String>,
+
     /// Rule action
-    action: String,
-    
+    pub action: String,
+
     /// Whether the rule is enabled
-    enabled: Option<bool>,
-    
+    pub enabled: Option<bool>,
+
     /// Rule priority
-    priority: Option<i32>,
+    pub priority: Option<i32>,
+
+    /// If true, auto-create the chain if it does not exist
+    pub auto_create_chain: Option<bool>,
+
+    /// If auto_create_chain is true, reference the new chain from a built-in one (INPUT, OUTPUT, FORWARD)
+    pub reference_from: Option<String>,
+}
+
+/// Custom chain request
+#[derive(Debug, Deserialize)]
+struct CustomChainRequest {
+    /// Custom chain name
+    name: String,
+    /// Optionally reference from a built-in chain (INPUT, OUTPUT, FORWARD)
+    reference_from: Option<String>,
 }
 
 impl RestService {
@@ -73,41 +87,63 @@ impl RestService {
     pub fn new(engine: Engine) -> Self {
         Self { engine }
     }
-    
+
     /// Run the service
-    pub async fn run(self) -> Result<()> {
+    pub async fn run(
+        self,
+        shutdown: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'static>>,
+    ) -> Result<()> {
+        info!("[RestService] Entered run()");
         let config = self.engine.get_config();
-        
+
         if !config.services.rest.enabled {
-            info!("REST API service is disabled");
+            info!("[RestService] REST API service is disabled");
             return Ok(());
         }
-        
+
         let bind_address = &config.services.rest.bind_address;
         let port = config.services.rest.port;
-        
+
         let addr = format!("{}:{}", bind_address, port)
-            .parse::<SocketAddr>()
+            .parse::<std::net::SocketAddr>()
             .unwrap();
-        
-        info!("Starting REST API service on {}", addr);
-       
+
+        info!("[RestService] Binding to address: {}", addr);
+
+        let listener = match tokio::net::TcpListener::bind(&addr).await {
+            Ok(l) => {
+                info!("[RestService] Successfully bound to {}", addr);
+                l
+            }
+            Err(e) => {
+                error!("[RestService] Failed to bind to {}: {}", addr, e);
+                return Err(e.into());
+            }
+        };
+
+        debug!("[RestService] Starting axum::serve");
         let app = Router::new()
-            .route("/api/rules", get(Self::list_rules))
-            .route("/api/rules", post(Self::add_rule))
-            .route("/api/rules", delete(Self::reset_rules))
-            .route("/api/rules/{id}", get(Self::get_rule))
-            .route("/api/rules/{id}", put(Self::update_rule))
-            .route("/api/rules/{id}", delete(Self::delete_rule))
+            .route("/api/filter/rules", get(Self::list_rules))
+            .route("/api/filter/rules", post(Self::add_rule))
+            .route("/api/filter/rules", delete(Self::reset_rules))
+            .route("/api/filter/rules/{id}", get(Self::get_rule))
+            .route("/api/filter/rules/{id}", put(Self::update_rule))
+            .route("/api/filter/rules/{id}", delete(Self::delete_rule))
+            .route("/api/filter/custom_chain", post(Self::create_custom_chain))
+            .route(
+                "/api/filter/custom_chain",
+                delete(Self::delete_custom_chain),
+            )
             .layer(TraceLayer::new_for_http())
             .with_state(Arc::new(self.engine));
-
-        let listener = TcpListener::bind(&addr).await.unwrap();
-        axum::serve(listener, app).await.unwrap();
+        axum::serve(listener, app)
+            .with_graceful_shutdown(shutdown)
+            .await
+            .unwrap();
 
         Ok(())
     }
-    
+
     /// List all rules
     async fn list_rules(State(engine): State<Arc<Engine>>) -> impl IntoResponse {
         match engine.list_rules() {
@@ -116,7 +152,9 @@ impl RestService {
                 error!("Failed to list rules: {}", e);
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ErrorResponse { message: e.to_string() }),
+                    Json(ErrorResponse {
+                        message: e.to_string(),
+                    }),
                 )
                     .into_response()
             }
@@ -131,81 +169,47 @@ impl RestService {
                 error!("Failed to reset rules: {}", e);
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ErrorResponse { message: e.to_string() }),
+                    Json(ErrorResponse {
+                        message: e.to_string(),
+                    }),
                 )
                     .into_response()
             }
         }
     }
-    
+
     /// Add a rule
     async fn add_rule(
         State(engine): State<Arc<Engine>>,
         Json(rule_req): Json<RuleRequest>,
     ) -> impl IntoResponse {
-        // Parse direction
-        let direction = match rule_req.direction.to_lowercase().as_str() {
-            "input" => Direction::Input,
-            "output" => Direction::Output,
-            "forward" => Direction::Forward,
-            _ => {
+        let auto_create_chain = rule_req.auto_create_chain.unwrap_or(false);
+        let reference_from = rule_req.reference_from.clone();
+        let rule = match rule_from_request(&rule_req) {
+            Ok(r) => r,
+            Err(msg) => {
                 return (
                     StatusCode::BAD_REQUEST,
-                    Json(ErrorResponse {
-                        message: format!("Invalid direction: {}", rule_req.direction),
-                    }),
+                    Json(ErrorResponse { message: msg }),
                 )
                     .into_response();
             }
         };
-        
-        // Parse action
-        let action = match rule_req.action.to_lowercase().as_str() {
-            "accept" => Action::Accept,
-            "drop" => Action::Drop,
-            "reject" => Action::Reject,
-            "log" => Action::Log,
-            _ => {
-                return (
-                    StatusCode::BAD_REQUEST,
-                    Json(ErrorResponse {
-                        message: format!("Invalid action: {}", rule_req.action),
-                    }),
-                )
-                    .into_response();
-            }
-        };
-        
-        // Create the rule
-        let mut rule = Rule::new(
-            rule_req.name,
-            direction,
-            action,
-            rule_req.priority.unwrap_or(0),
-        );
-        
-        rule.description = rule_req.description;
-        rule.source = rule_req.source;
-        rule.destination = rule_req.destination;
-        rule.source_port = rule_req.source_port;
-        rule.destination_port = rule_req.destination_port;
-        rule.protocol = rule_req.protocol;
-        rule.enabled = rule_req.enabled.unwrap_or(true);
-        
-        // Add the rule
-        match engine.add_rule(rule) {
+        match engine.add_rule_with_auto_create(rule, auto_create_chain, reference_from) {
             Ok(rule_id) => (StatusCode::CREATED, Json(json!({"id": rule_id}))).into_response(),
             Err(e) => {
                 error!("Failed to add rule: {}", e);
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ErrorResponse { message: e.to_string() }),
+                    Json(ErrorResponse {
+                        message: e.to_string(),
+                    }),
                 )
                     .into_response()
             }
         }
     }
-    
+
     /// Get a rule
     async fn get_rule(
         State(engine): State<Arc<Engine>>,
@@ -217,93 +221,72 @@ impl RestService {
                 error!("Failed to get rule {}: {}", rule_id, e);
                 (
                     StatusCode::NOT_FOUND,
-                    Json(ErrorResponse { message: e.to_string() }),
+                    Json(ErrorResponse {
+                        message: e.to_string(),
+                    }),
                 )
                     .into_response()
             }
         }
     }
-    
+
     /// Update a rule
     async fn update_rule(
         State(engine): State<Arc<Engine>>,
         Path(rule_id): Path<String>,
         Json(rule_req): Json<RuleRequest>,
     ) -> impl IntoResponse {
-        // Get the existing rule
-        let rule = match engine.get_rule(&rule_id) {
-            Ok(rule) => rule,
+        let auto_create_chain = rule_req.auto_create_chain.unwrap_or(false);
+        let reference_from = rule_req.reference_from.clone();
+        let mut rule = match engine.get_rule(&rule_id) {
+            Ok(r) => r,
             Err(e) => {
-                error!("Failed to get rule {}: {}", rule_id, e);
                 return (
                     StatusCode::NOT_FOUND,
-                    Json(ErrorResponse { message: e.to_string() }),
-                )
-                    .into_response();
-            }
-        };
-        
-        // Parse direction
-        let direction = match rule_req.direction.to_lowercase().as_str() {
-            "input" => Direction::Input,
-            "output" => Direction::Output,
-            "forward" => Direction::Forward,
-            _ => {
-                return (
-                    StatusCode::BAD_REQUEST,
                     Json(ErrorResponse {
-                        message: format!("Invalid direction: {}", rule_req.direction),
+                        message: e.to_string(),
                     }),
                 )
                     .into_response();
             }
         };
-        
-        // Parse action
-        let action = match rule_req.action.to_lowercase().as_str() {
-            "accept" => Action::Accept,
-            "drop" => Action::Drop,
-            "reject" => Action::Reject,
-            "log" => Action::Log,
-            _ => {
+        let new_rule = match rule_from_request(&rule_req) {
+            Ok(r) => r,
+            Err(msg) => {
                 return (
                     StatusCode::BAD_REQUEST,
-                    Json(ErrorResponse {
-                        message: format!("Invalid action: {}", rule_req.action),
-                    }),
+                    Json(ErrorResponse { message: msg }),
                 )
                     .into_response();
             }
         };
-        
-        // Update the rule
-        let mut updated_rule = rule.clone();
-        updated_rule.name = rule_req.name;
-        updated_rule.description = rule_req.description;
-        updated_rule.direction = direction;
-        updated_rule.source = rule_req.source;
-        updated_rule.destination = rule_req.destination;
-        updated_rule.source_port = rule_req.source_port;
-        updated_rule.destination_port = rule_req.destination_port;
-        updated_rule.protocol = rule_req.protocol;
-        updated_rule.action = action;
-        updated_rule.enabled = rule_req.enabled.unwrap_or(true);
-        updated_rule.priority = rule_req.priority.unwrap_or(0);
-        
-        // Apply the update
-        match engine.update_rule(updated_rule) {
+        // Overwrite all fields except id
+        rule.name = new_rule.name;
+        rule.description = new_rule.description;
+        rule.direction = new_rule.direction;
+        rule.source = new_rule.source;
+        rule.destination = new_rule.destination;
+        rule.source_port = new_rule.source_port;
+        rule.destination_port = new_rule.destination_port;
+        rule.protocol = new_rule.protocol;
+        rule.action = new_rule.action;
+        rule.enabled = new_rule.enabled;
+        rule.priority = new_rule.priority;
+        match engine.update_rule_with_auto_create(rule, auto_create_chain, reference_from) {
             Ok(_) => (StatusCode::OK, Json(json!({"success": true}))).into_response(),
             Err(e) => {
                 error!("Failed to update rule {}: {}", rule_id, e);
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ErrorResponse { message: e.to_string() }),
+                    Json(ErrorResponse {
+                        message: e.to_string(),
+                    }),
                 )
                     .into_response()
             }
         }
     }
-    
+
     /// Delete a rule
     async fn delete_rule(
         State(engine): State<Arc<Engine>>,
@@ -315,10 +298,164 @@ impl RestService {
                 error!("Failed to delete rule {}: {}", rule_id, e);
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ErrorResponse { message: e.to_string() }),
+                    Json(ErrorResponse {
+                        message: e.to_string(),
+                    }),
                 )
                     .into_response()
             }
         }
     }
+
+    /// Create a custom chain
+    async fn create_custom_chain(
+        State(engine): State<Arc<Engine>>,
+        Json(req): Json<CustomChainRequest>,
+    ) -> impl IntoResponse {
+        let config = engine.get_config();
+        let prefix = config
+            .modules
+            .get("iptables")
+            .and_then(|m| m.settings.get("chain_prefix"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("FORTEXA");
+        let chains_path = config
+            .modules
+            .get("iptables")
+            .and_then(|m| m.settings.get("chains_path"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("/var/lib/fortexa/chains.json");
+        let upper_name = req.name.to_uppercase();
+        let chain_name = if upper_name.starts_with(prefix) {
+            upper_name
+        } else {
+            format!("{}_{}", prefix, upper_name)
+        };
+        let filter = match crate::modules::iptables::IptablesFilter::new(prefix) {
+            Ok(f) => f,
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": e.to_string()})),
+                )
+                    .into_response();
+            }
+        };
+        let ref_from = req.reference_from.as_deref();
+        match filter.create_custom_chain(&chain_name, ref_from) {
+            Ok(_) => {
+                // Add to chains.json
+                let entry = CustomChainEntry {
+                    name: chain_name.clone(),
+                    reference_from: req.reference_from.clone(),
+                };
+                if let Err(e) = crate::modules::iptables::filter::IptablesFilter::add_chain_to_file(
+                    chains_path,
+                    &entry,
+                ) {
+                    error!("Failed to update chains.json: {}", e);
+                }
+                (
+                    StatusCode::CREATED,
+                    Json(json!({"success": true, "chain": chain_name})),
+                )
+                    .into_response()
+            }
+            Err(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": e.to_string()})),
+            )
+                .into_response(),
+        }
+    }
+
+    /// Delete a custom chain
+    async fn delete_custom_chain(
+        State(engine): State<Arc<Engine>>,
+        Json(req): Json<CustomChainRequest>,
+    ) -> impl IntoResponse {
+        let config = engine.get_config();
+        let prefix = config
+            .modules
+            .get("iptables")
+            .and_then(|m| m.settings.get("chain_prefix"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("FORTEXA");
+        let chains_path = config
+            .modules
+            .get("iptables")
+            .and_then(|m| m.settings.get("chains_path"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("/var/lib/fortexa/chains.json");
+        let upper_name = req.name.to_uppercase();
+        let chain_name = if upper_name.starts_with(prefix) {
+            upper_name
+        } else {
+            format!("{}_{}", prefix, upper_name)
+        };
+        let filter = match crate::modules::iptables::IptablesFilter::new(prefix) {
+            Ok(f) => f,
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": e.to_string()})),
+                )
+                    .into_response();
+            }
+        };
+        let ref_from = req.reference_from.as_deref();
+        match filter.delete_custom_chain(&chain_name, ref_from) {
+            Ok(_) => {
+                // Remove from chains.json
+                if let Err(e) =
+                    crate::modules::iptables::filter::IptablesFilter::remove_chain_from_file(
+                        chains_path,
+                        &chain_name,
+                    )
+                {
+                    error!("Failed to update chains.json: {}", e);
+                }
+                (
+                    StatusCode::OK,
+                    Json(json!({"success": true, "chain": chain_name})),
+                )
+                    .into_response()
+            }
+            Err(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": e.to_string()})),
+            )
+                .into_response(),
+        }
+    }
+}
+
+fn rule_from_request(rule_req: &RuleRequest) -> Result<Rule, String> {
+    let direction = match rule_req.direction.to_lowercase().as_str() {
+        "input" => Direction::Input,
+        "output" => Direction::Output,
+        "forward" => Direction::Forward,
+        custom => Direction::Custom(custom.to_string()),
+    };
+    let action = match rule_req.action.to_lowercase().as_str() {
+        "accept" => Action::Accept,
+        "drop" => Action::Drop,
+        "reject" => Action::Reject,
+        "log" => Action::Log,
+        _ => return Err(format!("Invalid action: {}", rule_req.action)),
+    };
+    let mut rule = Rule::new(
+        rule_req.name.clone(),
+        direction,
+        action,
+        rule_req.priority.unwrap_or(0),
+    );
+    rule.description = rule_req.description.clone();
+    rule.source = rule_req.source.clone();
+    rule.destination = rule_req.destination.clone();
+    rule.source_port = rule_req.source_port.clone();
+    rule.destination_port = rule_req.destination_port.clone();
+    rule.protocol = rule_req.protocol.clone();
+    rule.enabled = rule_req.enabled.unwrap_or(true);
+    Ok(rule)
 }

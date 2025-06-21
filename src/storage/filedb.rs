@@ -40,11 +40,11 @@ impl FileDB {
 
         Ok(db)
     }
-    
+
     /// Load rules from the file
     fn load(&mut self) -> Result<()> {
-        let file = File::open(&self.path)
-            .context(format!("Failed to open rules file: {}", self.path))?;
+        let file =
+            File::open(&self.path).context(format!("Failed to open rules file: {}", self.path))?;
 
         let reader = BufReader::new(file);
 
@@ -63,8 +63,7 @@ impl FileDB {
     fn save(&self) -> Result<()> {
         let rules: Vec<Rule> = self.rules.values().cloned().collect();
 
-        let json = serde_json::to_string_pretty(&rules)
-            .context("Failed to serialize rules")?;
+        let json = serde_json::to_string_pretty(&rules).context("Failed to serialize rules")?;
 
         let mut file = File::create(&self.path)
             .context(format!("Failed to create rules file: {}", self.path))?;
@@ -85,7 +84,8 @@ impl FileDB {
 
     /// Get a rule from the database
     pub fn get_rule(&self, id: &str) -> Result<Rule> {
-        self.rules.get(id)
+        self.rules
+            .get(id)
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("Rule not found: {}", id))
     }

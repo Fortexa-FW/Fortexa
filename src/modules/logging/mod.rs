@@ -34,10 +34,7 @@ impl LoggingModule {
 
         let logger = Logger::new(&log_file)?;
 
-        Ok(Self {
-            config,
-            logger,
-        })
+        Ok(Self { config, logger })
     }
 }
 
@@ -49,5 +46,9 @@ impl Module for LoggingModule {
     fn apply_rules(&self, rules: &[Rule]) -> Result<()> {
         // Log the rules being applied
         self.logger.log_rules_applied(rules)
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }

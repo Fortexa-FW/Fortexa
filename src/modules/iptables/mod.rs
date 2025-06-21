@@ -1,6 +1,6 @@
 //! IPTables module for the Fortexa firewall
 
-mod filter;
+pub mod filter;
 
 use anyhow::Result;
 use std::sync::Arc;
@@ -34,19 +34,43 @@ impl IptablesModule {
 
         let filter = IptablesFilter::new(&chain_prefix)?;
 
-        Ok(Self {
-            config,
-            filter,
-        })
+        Ok(Self { config, filter })
     }
 }
 
 impl Module for IptablesModule {
     fn init(&self) -> Result<()> {
-        self.filter.init()
+        self.filter.init()?;
+        let chains_path = self
+            .config
+            .modules
+            .get("iptables")
+            .and_then(|m| m.settings.get("chains_path"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("/var/lib/fortexa/chains.json");
+        crate::modules::iptables::filter::IptablesFilter::apply_custom_chains_from_file(
+            chains_path,
+        )?;
+        Ok(())
     }
 
     fn apply_rules(&self, rules: &[Rule]) -> Result<()> {
         self.filter.apply_rules(rules)
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+impl IptablesModule {
+    pub fn apply_rules_with_auto_create(
+        &self,
+        rules: &[crate::core::rules::Rule],
+        auto_create_chain: bool,
+        reference_from: Option<&str>,
+    ) -> Result<()> {
+        self.filter
+            .apply_rules_with_auto_create(rules, auto_create_chain, reference_from)
     }
 }
