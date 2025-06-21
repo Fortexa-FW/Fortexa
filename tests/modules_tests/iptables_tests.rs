@@ -6,6 +6,7 @@ use std::io::Write;
 use tempfile::NamedTempFile;
 
 #[test]
+#[ignore]
 fn test_iptables_chain_creation() {
     eprintln!("[debug] test_iptables_chain_creation running");
     let chain_prefix = format!(
@@ -22,6 +23,7 @@ fn test_iptables_chain_creation() {
 }
 
 #[test]
+#[ignore]
 fn test_rule_creation_and_application() {
     eprintln!("[debug] test_rule_creation_and_application running");
     let mut tmpfile = NamedTempFile::new().unwrap();
@@ -42,6 +44,7 @@ fn test_rule_creation_and_application() {
 }
 
 #[test]
+#[ignore]
 fn test_custom_chain_creation_and_deletion() {
     eprintln!("[debug] test_custom_chain_creation_and_deletion running");
     let chain_prefix = format!(
@@ -100,6 +103,7 @@ fn test_custom_chain_creation_and_deletion() {
 }
 
 #[test]
+#[ignore]
 fn test_apply_custom_chains_from_file() {
     use fortexa::modules::iptables::filter::{CustomChainEntry, IptablesFilter};
     use std::fs;

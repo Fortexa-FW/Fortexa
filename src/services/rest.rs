@@ -68,6 +68,9 @@ pub struct RuleRequest {
 
     /// If true, auto-create the chain if it does not exist
     pub auto_create_chain: Option<bool>,
+
+    /// If auto_create_chain is true, reference the new chain from a built-in one (INPUT, OUTPUT, FORWARD)
+    pub reference_from: Option<String>,
 }
 
 /// Custom chain request
@@ -181,6 +184,7 @@ impl RestService {
         Json(rule_req): Json<RuleRequest>,
     ) -> impl IntoResponse {
         let auto_create_chain = rule_req.auto_create_chain.unwrap_or(false);
+        let reference_from = rule_req.reference_from.clone();
         let rule = match rule_from_request(&rule_req) {
             Ok(r) => r,
             Err(msg) => {
@@ -191,7 +195,7 @@ impl RestService {
                     .into_response();
             }
         };
-        match engine.add_rule_with_auto_create(rule, auto_create_chain) {
+        match engine.add_rule_with_auto_create(rule, auto_create_chain, reference_from) {
             Ok(rule_id) => (StatusCode::CREATED, Json(json!({"id": rule_id}))).into_response(),
             Err(e) => {
                 error!("Failed to add rule: {}", e);
@@ -233,6 +237,7 @@ impl RestService {
         Json(rule_req): Json<RuleRequest>,
     ) -> impl IntoResponse {
         let auto_create_chain = rule_req.auto_create_chain.unwrap_or(false);
+        let reference_from = rule_req.reference_from.clone();
         let mut rule = match engine.get_rule(&rule_id) {
             Ok(r) => r,
             Err(e) => {
@@ -267,7 +272,7 @@ impl RestService {
         rule.action = new_rule.action;
         rule.enabled = new_rule.enabled;
         rule.priority = new_rule.priority;
-        match engine.update_rule_with_auto_create(rule, auto_create_chain) {
+        match engine.update_rule_with_auto_create(rule, auto_create_chain, reference_from) {
             Ok(_) => (StatusCode::OK, Json(json!({"success": true}))).into_response(),
             Err(e) => {
                 error!("Failed to update rule {}: {}", rule_id, e);
@@ -320,10 +325,11 @@ impl RestService {
             .and_then(|m| m.settings.get("chains_path"))
             .and_then(|v| v.as_str())
             .unwrap_or("/var/lib/fortexa/chains.json");
-        let chain_name = if req.name.starts_with(prefix) {
-            req.name.clone()
+        let upper_name = req.name.to_uppercase();
+        let chain_name = if upper_name.starts_with(prefix) {
+            upper_name
         } else {
-            format!("{}_{}", prefix, req.name)
+            format!("{}_{}", prefix, upper_name)
         };
         let filter = match crate::modules::iptables::IptablesFilter::new(prefix) {
             Ok(f) => f,
@@ -381,10 +387,11 @@ impl RestService {
             .and_then(|m| m.settings.get("chains_path"))
             .and_then(|v| v.as_str())
             .unwrap_or("/var/lib/fortexa/chains.json");
-        let chain_name = if req.name.starts_with(prefix) {
-            req.name.clone()
+        let upper_name = req.name.to_uppercase();
+        let chain_name = if upper_name.starts_with(prefix) {
+            upper_name
         } else {
-            format!("{}_{}", prefix, req.name)
+            format!("{}_{}", prefix, upper_name)
         };
         let filter = match crate::modules::iptables::IptablesFilter::new(prefix) {
             Ok(f) => f,
@@ -428,7 +435,7 @@ fn rule_from_request(rule_req: &RuleRequest) -> Result<Rule, String> {
         "input" => Direction::Input,
         "output" => Direction::Output,
         "forward" => Direction::Forward,
-        _ => return Err(format!("Invalid direction: {}", rule_req.direction)),
+        custom => Direction::Custom(custom.to_string()),
     };
     let action = match rule_req.action.to_lowercase().as_str() {
         "accept" => Action::Accept,

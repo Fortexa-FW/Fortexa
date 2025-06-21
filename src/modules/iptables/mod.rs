@@ -68,8 +68,9 @@ impl IptablesModule {
         &self,
         rules: &[crate::core::rules::Rule],
         auto_create_chain: bool,
+        reference_from: Option<&str>,
     ) -> Result<()> {
         self.filter
-            .apply_rules_with_auto_create(rules, auto_create_chain)
+            .apply_rules_with_auto_create(rules, auto_create_chain, reference_from)
     }
 }

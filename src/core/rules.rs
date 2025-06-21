@@ -7,7 +7,7 @@ use uuid::Uuid;
 use crate::storage::filedb::FileDB;
 
 /// Rule direction
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Direction {
     /// Incoming traffic
     Input,
@@ -17,6 +17,9 @@ pub enum Direction {
 
     /// Forwarded traffic
     Forward,
+
+    /// Custom chain
+    Custom(String),
 }
 
 /// Rule action

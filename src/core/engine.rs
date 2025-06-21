@@ -20,7 +20,7 @@ rules_path = "/var/lib/fortexa/rules.json"
 
 [modules.iptables]
 enabled = true
-settings = { chain_prefix = "FORTEXA" }
+settings = { chain_prefix = "FORTEXA", chains_path = "/var/lib/fortexa/chains.json" }
 
 [modules.logging]
 enabled = true
@@ -171,7 +171,12 @@ impl Engine {
     }
 
     /// Add a rule with auto_create_chain option (for REST API only)
-    pub fn add_rule_with_auto_create(&self, rule: Rule, auto_create_chain: bool) -> Result<String> {
+    pub fn add_rule_with_auto_create(
+        &self,
+        rule: Rule,
+        auto_create_chain: bool,
+        reference_from: Option<String>,
+    ) -> Result<String> {
         let rule_id = self.rules_manager.add_rule(rule.clone())?;
         let rules = self.rules_manager.get_enabled_rules()?;
         let module_manager = self.module_manager.lock().unwrap();
@@ -183,7 +188,11 @@ impl Engine {
                         .as_any()
                         .downcast_ref::<crate::modules::iptables::IptablesModule>()
                     {
-                        iptables.apply_rules_with_auto_create(&rules, auto_create_chain)?;
+                        iptables.apply_rules_with_auto_create(
+                            &rules,
+                            auto_create_chain,
+                            reference_from.as_deref(),
+                        )?;
                         continue;
                     }
                 }
@@ -194,7 +203,12 @@ impl Engine {
     }
 
     /// Update a rule with auto_create_chain option (for REST API only)
-    pub fn update_rule_with_auto_create(&self, rule: Rule, auto_create_chain: bool) -> Result<()> {
+    pub fn update_rule_with_auto_create(
+        &self,
+        rule: Rule,
+        auto_create_chain: bool,
+        reference_from: Option<String>,
+    ) -> Result<()> {
         self.rules_manager.update_rule(rule)?;
         let rules = self.rules_manager.get_enabled_rules()?;
         let module_manager = self.module_manager.lock().unwrap();
@@ -206,7 +220,11 @@ impl Engine {
                         .as_any()
                         .downcast_ref::<crate::modules::iptables::IptablesModule>()
                     {
-                        iptables.apply_rules_with_auto_create(&rules, auto_create_chain)?;
+                        iptables.apply_rules_with_auto_create(
+                            &rules,
+                            auto_create_chain,
+                            reference_from.as_deref(),
+                        )?;
                         continue;
                     }
                 }

@@ -192,26 +192,48 @@ impl IptablesFilter {
         &self,
         rules: &[Rule],
         auto_create_chain: bool,
+        reference_from: Option<&str>,
     ) -> Result<()> {
         self.clear_rules()?;
         for rule in rules {
             if !rule.enabled {
                 continue;
             }
-            self.apply_rule_with_flag(rule, auto_create_chain)?;
+            self.apply_rule_with_flag(rule, auto_create_chain, reference_from)?;
         }
         Ok(())
     }
 
     /// Apply a rule with auto_create_chain
-    fn apply_rule_with_flag(&self, rule: &Rule, auto_create_chain: bool) -> Result<()> {
-        let chain = match rule.direction {
+    fn apply_rule_with_flag(
+        &self,
+        rule: &Rule,
+        auto_create_chain: bool,
+        reference_from: Option<&str>,
+    ) -> Result<()> {
+        let chain = match &rule.direction {
             Direction::Input => format!("{}_INPUT", self.chain_prefix),
             Direction::Output => format!("{}_OUTPUT", self.chain_prefix),
             Direction::Forward => format!("{}_FORWARD", self.chain_prefix),
+            Direction::Custom(name) => {
+                let upper_name = name.to_uppercase();
+                if upper_name.starts_with(&self.chain_prefix) {
+                    upper_name
+                } else {
+                    format!("{}_{}", self.chain_prefix, upper_name)
+                }
+            }
         };
         if auto_create_chain {
-            self.ensure_chain_exists(&chain)?;
+            let created = self.ensure_chain_exists(&chain)?;
+            if created {
+                if let (Some(ref_chain), Direction::Custom(_)) = (reference_from, &rule.direction) {
+                    let valid_built_ins = ["INPUT", "OUTPUT", "FORWARD"];
+                    if valid_built_ins.contains(&ref_chain.to_uppercase().as_str()) {
+                        self.create_jump_rule(ref_chain, &chain)?;
+                    }
+                }
+            }
         }
         // Build the rule arguments
         let mut args = Vec::new();
@@ -273,19 +295,35 @@ impl IptablesFilter {
 
     /// The default apply_rule now always uses auto_create_chain = false
     fn apply_rule(&self, rule: &Rule) -> Result<()> {
-        self.apply_rule_with_flag(rule, false)
+        self.apply_rule_with_flag(rule, false, None)
     }
 
-    fn ensure_chain_exists(&self, chain: &str) -> Result<()> {
-        let output = Command::new("iptables")
-            .args(["-t", TABLE_NAME, "-L", chain])
-            .output()
-            .context("Failed to execute iptables command")?;
-        if !output.status.success() {
+    fn ensure_chain_exists(&self, chain: &str) -> Result<bool> {
+        if !self
+            .iptables
+            .chain_exists(TABLE_NAME, chain)
+            .map_err(|e| anyhow::anyhow!(e.to_string()))
+            .context("Failed to check if chain exists")?
+        {
+            info!("Creating chain: {}", chain);
             self.iptables
                 .new_chain(TABLE_NAME, chain)
                 .map_err(|e| anyhow::anyhow!("{}", e))
                 .context(format!("Failed to create chain: {}", chain))?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    fn create_jump_rule(&self, source_chain: &str, target_chain: &str) -> Result<()> {
+        let rule_exists = self.jump_rule_exists(source_chain, target_chain)?;
+        if !rule_exists {
+            info!("Adding jump rule from {} to {}", source_chain, target_chain);
+            self.iptables
+                .append(TABLE_NAME, source_chain, &format!("-j {}", target_chain))
+                .map_err(|e| anyhow::anyhow!("{}", e))
+                .context(format!("Failed to add jump rule to {} chain", source_chain))?;
         }
         Ok(())
     }
@@ -427,7 +465,7 @@ impl IptablesFilter {
     ) -> Result<String> {
         let rule_id = rules_manager.add_rule(rule.clone())?;
         let rules = rules_manager.get_enabled_rules()?;
-        self.apply_rules_with_auto_create(&rules, auto_create_chain)?;
+        self.apply_rules_with_auto_create(&rules, auto_create_chain, None)?;
         Ok(rule_id)
     }
 
@@ -439,7 +477,7 @@ impl IptablesFilter {
     ) -> Result<()> {
         rules_manager.update_rule(rule)?;
         let rules = rules_manager.get_enabled_rules()?;
-        self.apply_rules_with_auto_create(&rules, auto_create_chain)?;
+        self.apply_rules_with_auto_create(&rules, auto_create_chain, None)?;
         Ok(())
     }
 }

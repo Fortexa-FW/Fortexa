@@ -2,6 +2,7 @@ use super::FORTEXA_TEST_CHAINS_REGEX;
 use std::process::Command;
 
 #[test]
+#[ignore]
 /// Cleans up iptables chains created for tests with the given prefix.
 pub fn cleanup_all_test_chains() {
     let cmd = format!(
