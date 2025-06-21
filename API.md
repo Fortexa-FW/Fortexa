@@ -4,9 +4,9 @@ This document describes the REST API for managing firewall rules.
 
 The API base URL is `http://<bind_address>:<port>`. By default, this is `http://127.0.0.1:8080`.
 
-## Rules API
+## 1. Rules API
 
-### List all rules
+### 1.1 List all rules
 
 - **GET** `/api/filter/rules`
 
@@ -18,7 +18,7 @@ Lists all currently configured firewall rules.
 curl -X GET http://127.0.0.1:8080/api/filter/rules
 ```
 
-### Add a new rule
+### 1.2 Add a new rule
 
 - **POST** `/api/filter/rules`
 
@@ -78,7 +78,12 @@ curl -X POST http://127.0.0.1:8080/api/filter/rules \
 
 This will create a rule in a new `FORTEXA_WEB_TRAFFIC` chain, and also add a jump rule from the `INPUT` chain to `FORTEXA_WEB_TRAFFIC`.
 
-### Reset all rules
+### 1.3 Reset all rules
+
+**Description:**
+Removes (deletes) **all firewall rules** in both the kernel and the persisted `rules.json` file. After calling this endpoint, your firewall will be empty and allow all traffic (unless new rules are added).
+
+
 
 - **DELETE** `/api/filter/rules`
 
@@ -90,7 +95,8 @@ Deletes all firewall rules. Use with caution.
 curl -X DELETE http://127.0.0.1:8080/api/filter/rules
 ```
 
-### Get a specific rule
+
+### 1.4 Get a specific rule
 
 - **GET** `/api/filter/rules/{id}`
 
@@ -102,7 +108,7 @@ Retrieves a single rule by its ID. The rule ID is returned when a rule is create
 curl -X GET http://127.0.0.1:8080/api/filter/rules/3a8f6e2e-a34f-4b0d-b82b-2d7c0f1b2c4d
 ```
 
-### Update a rule
+### 1.5 Update a rule
 
 - **PUT** `/api/filter/rules/{id}`
 
@@ -124,7 +130,7 @@ curl -X PUT http://127.0.0.1:8080/api/filter/rules/3a8f6e2e-a34f-4b0d-b82b-2d7c0
 }'
 ```
 
-### Delete a rule
+### 1.6 Delete a rule
 
 - **DELETE** `/api/filter/rules/{id}`
 
@@ -136,9 +142,9 @@ Deletes a specific rule by its ID.
 curl -X DELETE http://127.0.0.1:8080/api/filter/rules/3a8f6e2e-a34f-4b0d-b82b-2d7c0f1b2c4d
 ```
 
-## Custom Chains API
+## 2. Custom Chains API
 
-### Create a custom chain
+### 2.1 Create a custom chain
 
 - **POST** `/api/filter/custom_chain`
 
@@ -170,7 +176,7 @@ curl -X POST http://127.0.0.1:8080/api/filter/custom_chain \
 
 This will create a chain named `FORTEXA_WEB_TRAFFIC` and add a rule to `INPUT` to jump to it.
 
-### Delete a custom chain
+### 2.1 Delete a custom chain
 
 - **DELETE** `/api/filter/custom_chain`
 
@@ -199,3 +205,21 @@ curl -X DELETE http://127.0.0.1:8080/api/filter/custom_chain \
   "reference_from": "INPUT"
 }'
 ```
+
+## Example using cURL
+
+```sh
+curl -X DELETE http://127.0.0.1:8080/api/filter/rules
+```
+
+
+**What Happens**
+
+- All chains (`FORTEXA_INPUT`, `FORTEXA_OUTPUT`) are flushed and deleted from iptables (kernel).
+- Subsequent `/api/filter/rules` POST requests can build new rules as needed.
+
+
+**Security Note for resetting**
+
+- This action removes **all protections** until new rules are added!
+- It is recommended to protect this endpoint with authentication or network restrictions in production.
