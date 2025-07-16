@@ -9,12 +9,14 @@ use axum::{
 use log::{debug, error, info};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tower_http::trace::TraceLayer;
 
 use crate::core::engine::Engine;
 use crate::core::rules::{Action, Direction, Rule};
 use crate::modules::iptables::filter::CustomChainEntry;
+use crate::modules::netshield::{self, NetshieldRule};
 
 /// REST service
 #[derive(Clone)]
@@ -82,6 +84,24 @@ struct CustomChainRequest {
     reference_from: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct NetshieldRuleRequest {
+    pub id: Option<String>,
+    pub name: String,
+    pub description: Option<String>,
+    pub direction: String,
+    pub source: Option<String>,
+    pub destination: Option<String>,
+    pub source_port: Option<u16>,
+    pub destination_port: Option<u16>,
+    pub protocol: Option<String>,
+    pub action: String,
+    pub enabled: Option<bool>,
+    pub priority: Option<i32>,
+    pub parameters: Option<HashMap<String, String>>,
+    pub group: Option<String>,
+}
+
 impl RestService {
     /// Create a new REST service
     pub fn new(engine: Engine) -> Self {
@@ -133,6 +153,23 @@ impl RestService {
             .route(
                 "/api/filter/custom_chain",
                 delete(Self::delete_custom_chain),
+            )
+            .route("/api/netshield/rules", get(Self::list_netshield_rules))
+            .route("/api/netshield/rules", post(Self::add_netshield_rule))
+            .route("/api/netshield/rules", delete(Self::delete_netshield_rule))
+            .route("/api/netshield/rules/{id}", get(Self::get_netshield_rule))
+            .route(
+                "/api/netshield/rules/{id}",
+                put(Self::update_netshield_rule),
+            )
+            .route(
+                "/api/netshield/rules/{id}",
+                delete(Self::delete_netshield_rule_by_id),
+            )
+            .route("/api/netshield/groups", get(Self::list_netshield_groups))
+            .route(
+                "/api/netshield/groups/:group/rules",
+                get(Self::list_netshield_rules_by_group),
             )
             .layer(TraceLayer::new_for_http())
             .with_state(Arc::new(self.engine));
@@ -427,6 +464,181 @@ impl RestService {
             )
                 .into_response(),
         }
+    }
+
+    /// List all netshield rules
+    async fn list_netshield_rules() -> impl IntoResponse {
+        let rules = netshield::get_rules();
+        (StatusCode::OK, Json(rules))
+    }
+
+    /// Add a netshield rule
+    async fn add_netshield_rule(Json(req): Json<NetshieldRuleRequest>) -> impl IntoResponse {
+        let direction = match req.direction.to_lowercase().as_str() {
+            "incoming" => netshield::Direction::Incoming,
+            "outgoing" => netshield::Direction::Outgoing,
+            _ => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(ErrorResponse {
+                        message: "Invalid direction".to_string(),
+                    }),
+                )
+                    .into_response();
+            }
+        };
+        let action = match req.action.to_lowercase().as_str() {
+            "block" => netshield::Action::Block,
+            "allow" => netshield::Action::Allow,
+            "log" => netshield::Action::Log,
+            _ => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(ErrorResponse {
+                        message: "Invalid action".to_string(),
+                    }),
+                )
+                    .into_response();
+            }
+        };
+        let rule = netshield::NetshieldRule {
+            id: req.id.unwrap_or_default(),
+            name: req.name,
+            description: req.description,
+            direction,
+            source: req.source,
+            destination: req.destination,
+            source_port: req.source_port,
+            destination_port: req.destination_port,
+            protocol: req.protocol,
+            action,
+            enabled: req.enabled.unwrap_or(true),
+            priority: req.priority.unwrap_or(0),
+            parameters: req.parameters.unwrap_or_default(),
+            group: req.group,
+        };
+        let mut netshield = netshield::NetshieldModule::new();
+        match netshield::add_rule(&mut netshield, rule) {
+            Ok(_) => (StatusCode::CREATED, Json(json!({"success": true}))).into_response(),
+            Err(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse { message: e }),
+            )
+                .into_response(),
+        }
+    }
+
+    /// Delete a netshield rule
+    async fn delete_netshield_rule(Json(req): Json<NetshieldRuleRequest>) -> impl IntoResponse {
+        if let Some(id) = req.id {
+            let mut netshield = netshield::NetshieldModule::new();
+            match netshield::delete_rule(&mut netshield, &id) {
+                Ok(_) => (StatusCode::OK, Json(json!({"success": true}))).into_response(),
+                Err(e) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse { message: e }),
+                )
+                    .into_response(),
+            }
+        } else {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    message: "Missing rule id for deletion".to_string(),
+                }),
+            )
+                .into_response()
+        }
+    }
+
+    /// Get a netshield rule by id
+    async fn get_netshield_rule(Path(id): Path<String>) -> impl IntoResponse {
+        match netshield::get_rule(&id) {
+            Some(rule) => (StatusCode::OK, Json(rule)).into_response(),
+            None => (
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    message: "Rule not found".to_string(),
+                }),
+            )
+                .into_response(),
+        }
+    }
+
+    /// Update a netshield rule by id
+    async fn update_netshield_rule(
+        Path(id): Path<String>,
+        Json(req): Json<NetshieldRuleRequest>,
+    ) -> impl IntoResponse {
+        let direction = match req.direction.to_lowercase().as_str() {
+            "incoming" => netshield::Direction::Incoming,
+            "outgoing" => netshield::Direction::Outgoing,
+            _ => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(ErrorResponse {
+                        message: "Invalid direction".to_string(),
+                    }),
+                )
+                    .into_response();
+            }
+        };
+        let action = match req.action.to_lowercase().as_str() {
+            "block" => netshield::Action::Block,
+            "allow" => netshield::Action::Allow,
+            "log" => netshield::Action::Log,
+            _ => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(ErrorResponse {
+                        message: "Invalid action".to_string(),
+                    }),
+                )
+                    .into_response();
+            }
+        };
+        let updated = netshield::NetshieldRule {
+            id: id.clone(),
+            name: req.name,
+            description: req.description,
+            direction,
+            source: req.source,
+            destination: req.destination,
+            source_port: req.source_port,
+            destination_port: req.destination_port,
+            protocol: req.protocol,
+            action,
+            enabled: req.enabled.unwrap_or(true),
+            priority: req.priority.unwrap_or(0),
+            parameters: req.parameters.unwrap_or_default(),
+            group: req.group,
+        };
+        let mut netshield = netshield::NetshieldModule::new();
+        match netshield::update_rule(&mut netshield, &id, updated) {
+            Ok(_) => (StatusCode::OK, Json(json!({"success": true}))).into_response(),
+            Err(e) => (StatusCode::NOT_FOUND, Json(ErrorResponse { message: e })).into_response(),
+        }
+    }
+
+    /// Delete a netshield rule by id (path param)
+    async fn delete_netshield_rule_by_id(Path(id): Path<String>) -> impl IntoResponse {
+        let mut netshield = netshield::NetshieldModule::new();
+        match netshield::delete_rule(&mut netshield, &id) {
+            Ok(_) => (StatusCode::OK, Json(json!({"success": true}))).into_response(),
+            Err(e) => (StatusCode::NOT_FOUND, Json(ErrorResponse { message: e })).into_response(),
+        }
+    }
+
+    /// List all netshield groups
+    async fn list_netshield_groups() -> impl IntoResponse {
+        let groups = netshield::get_groups();
+        (StatusCode::OK, Json(groups))
+    }
+
+    /// List all netshield rules in a group
+    async fn list_netshield_rules_by_group(Path(group): Path<String>) -> impl IntoResponse {
+        let rules = netshield::get_rules_by_group(&group);
+        (StatusCode::OK, Json(rules))
     }
 }
 

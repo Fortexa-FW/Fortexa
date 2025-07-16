@@ -7,6 +7,7 @@ use crate::core::rules::Rule;
 
 pub mod iptables;
 pub mod logging;
+pub mod netshield;
 
 /// Module trait
 pub trait Module: Send + Sync {

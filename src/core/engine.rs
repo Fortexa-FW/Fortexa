@@ -11,6 +11,7 @@ use crate::core::rules::{Rule, RulesManager};
 use crate::modules::ModuleManager;
 use crate::modules::iptables::IptablesModule;
 use crate::modules::logging::LoggingModule;
+use crate::modules::netshield::NetshieldRule;
 
 const DEFAULT_CONFIG: &str = r#"
 [general]
@@ -19,12 +20,16 @@ log_level = "info"
 rules_path = "/var/lib/fortexa/rules.json"
 
 [modules.iptables]
-enabled = true
+enabled = false
 settings = { chain_prefix = "FORTEXA", chains_path = "/var/lib/fortexa/chains.json" }
 
 [modules.logging]
 enabled = true
 settings = { log_file = "/var/log/fortexa.log" }
+
+[modules.netshield]
+enabled = true
+rules_path = "/var/lib/fortexa/netshield_rules.json"
 
 [services.rest]
 enabled = true
@@ -233,4 +238,14 @@ impl Engine {
         }
         Ok(())
     }
+}
+
+/// Apply a single NetshieldRule to the system (placeholder for eBPF/XDP logic)
+pub fn apply_rule_to_system(rule: &NetshieldRule) -> Result<(), String> {
+    // TODO: Replace this with real eBPF/XDP logic
+    info!(
+        "[Netshield] Applying rule: id={} name={} action={:?} direction={:?} src={:?} dst={:?} group={:?}",
+        rule.id, rule.name, rule.action, rule.direction, rule.source, rule.destination, rule.group
+    );
+    Ok(())
 }

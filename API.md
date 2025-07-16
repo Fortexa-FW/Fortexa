@@ -223,3 +223,168 @@ curl -X DELETE http://127.0.0.1:8080/api/filter/rules
 
 - This action removes **all protections** until new rules are added!
 - It is recommended to protect this endpoint with authentication or network restrictions in production.
+
+## 3. Netshield API (eBPF/XDP-based Filtering)
+
+Netshield provides high-performance network filtering using eBPF/XDP. These rules are managed separately from iptables rules and are persisted in `/var/lib/fortexa/filter_rules.json`.
+
+### 3.1 List all netshield rules
+
+- **GET** `/api/netshield/rules`
+
+Lists all currently configured netshield rules.
+
+**Example:**
+
+```bash
+curl -X GET http://127.0.0.1:8080/api/netshield/rules
+```
+
+### 3.2 Add a new netshield rule
+
+- **POST** `/api/netshield/rules`
+
+Adds a new netshield rule.
+
+**Payload:**
+
+```json
+{
+  "name": "pxtest",
+  "description": null,
+  "direction": "Output",
+  "source": null,
+  "destination": "8.8.8.8",
+  "source_port": null,
+  "destination_port": null,
+  "protocol": null,
+  "action": "Log",
+  "enabled": true,
+  "priority": 0,
+  "parameters": {}
+}
+```
+
+**Fields:**
+- `id` (string, optional): Unique rule ID. If omitted, a new UUID is generated.
+- `name` (string, required): Name for the rule.
+- `description` (string, optional): Description for the rule.
+- `direction` (string, required): `Incoming` or `Outgoing`.
+- `source` (string, optional): Source IP or CIDR.
+- `destination` (string, optional): Destination IP or CIDR.
+- `source_port` (integer, optional): Source port.
+- `destination_port` (integer, optional): Destination port.
+- `protocol` (string, optional): Protocol (e.g., `tcp`, `udp`).
+- `action` (string, required): `Block`, `Allow`, or `Log`.
+- `enabled` (boolean, optional): Whether the rule is enabled. Defaults to `true`.
+- `priority` (integer, optional): Rule priority. Defaults to `0`.
+- `parameters` (object, optional): Additional parameters as key-value pairs.
+- `group` (string, optional): Group name for this rule. Used to organize rules into logical groups.
+
+**Example:**
+
+```bash
+curl -X POST http://127.0.0.1:8080/api/netshield/rules \
+-H "Content-Type: application/json" \
+-d '{
+  "name": "pxtest",
+  "direction": "Outgoing",
+  "destination": "8.8.8.8",
+  "action": "Log"
+}'
+```
+
+### 3.3 Get a specific netshield rule
+
+- **GET** `/api/netshield/rules/{id}`
+
+Retrieves a single netshield rule by its ID.
+
+**Example:**
+
+```bash
+curl -X GET http://127.0.0.1:8080/api/netshield/rules/cb16dd5e-00d1-4abb-beba-cf43ba6b4668
+```
+
+### 3.4 Update a netshield rule
+
+- **PUT** `/api/netshield/rules/{id}`
+
+Updates an existing netshield rule. The payload is the same as for adding a rule. All fields are overwritten.
+
+**Example:**
+
+```bash
+curl -X PUT http://127.0.0.1:8080/api/netshield/rules/cb16dd5e-00d1-4abb-beba-cf43ba6b4668 \
+-H "Content-Type: application/json" \
+-d '{
+  "name": "pxtest",
+  "description": "Updated description",
+  "direction": "Outgoing",
+  "destination": "8.8.8.8",
+  "action": "Log",
+  "enabled": true,
+  "priority": 0,
+  "parameters": {}
+}'
+```
+
+### 3.5 Delete a netshield rule
+
+- **DELETE** `/api/netshield/rules/{id}`
+
+Deletes a specific netshield rule by its ID.
+
+**Example:**
+
+```bash
+curl -X DELETE http://127.0.0.1:8080/api/netshield/rules/cb16dd5e-00d1-4abb-beba-cf43ba6b4668
+```
+
+### 3.6 List all netshield groups
+
+- **GET** `/api/netshield/groups`
+
+Returns a list of all unique group names used in netshield rules.
+
+**Example:**
+
+```bash
+curl -X GET http://127.0.0.1:8080/api/netshield/groups
+```
+
+**Response:**
+```json
+[
+  "web",
+  "ssh"
+]
+```
+
+### 3.7 List all rules in a group
+
+- **GET** `/api/netshield/groups/{group}/rules`
+
+Returns all rules that belong to the specified group.
+
+**Example:**
+
+```bash
+curl -X GET http://127.0.0.1:8080/api/netshield/groups/web/rules
+```
+
+**Response:**
+```json
+[
+  {
+    "id": "cb16dd5e-00d1-4abb-beba-cf43ba6b4668",
+    "name": "pxtest",
+    "group": "web",
+    ...
+  }
+]
+```
+
+---
+
+Netshield rules are managed independently from iptables rules. Use these endpoints for eBPF/XDP-based filtering.
