@@ -1,7 +1,3 @@
-pub mod iptables;
-
-pub const FORTEXA_TEST_CHAINS_REGEX: &str = "FORTEXA_TST_.*";
-
 pub const TEST_CONFIG_TOML: &str = r#"
 [general]
 enabled = true

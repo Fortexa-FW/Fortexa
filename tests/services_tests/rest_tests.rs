@@ -1,5 +1,4 @@
 use crate::common::TEST_CONFIG_TOML;
-use crate::common::iptables::cleanup_test_chains;
 use fortexa::core::engine::Engine;
 use fortexa::services::rest::RestService;
 use portpicker;

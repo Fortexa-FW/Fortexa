@@ -1,5 +1,6 @@
 use anyhow::Result;
 use log::{debug, info};
+use std::collections::HashMap;
 use std::fs;
 use std::fs::File;
 use std::io::Write;
@@ -9,19 +10,13 @@ use std::sync::{Arc, Mutex};
 use crate::core::config::Config;
 use crate::core::rules::{Rule, RulesManager};
 use crate::modules::ModuleManager;
-use crate::modules::iptables::IptablesModule;
 use crate::modules::logging::LoggingModule;
-use crate::modules::netshield::NetshieldRule;
+use crate::modules::netshield::{NetshieldModule, NetshieldRule};
 
 const DEFAULT_CONFIG: &str = r#"
 [general]
 enabled = true
 log_level = "info"
-rules_path = "/var/lib/fortexa/rules.json"
-
-[modules.iptables]
-enabled = false
-settings = { chain_prefix = "FORTEXA", chains_path = "/var/lib/fortexa/chains.json" }
 
 [modules.logging]
 enabled = true
@@ -38,13 +33,12 @@ port = 8080
 "#;
 
 /// The core firewall engine
-#[derive(Clone)]
 pub struct Engine {
     /// The configuration
     config: Arc<Config>,
 
-    /// The rules manager
-    rules_manager: Arc<RulesManager>,
+    /// The rules managers, one per module
+    rules_managers: HashMap<String, Arc<RulesManager>>,
 
     /// The module manager
     module_manager: Arc<Mutex<ModuleManager>>,
@@ -59,12 +53,30 @@ impl Engine {
         info!("[Engine::new] REST port: {}", config.services.rest.port);
         let config = Arc::new(config);
 
-        let rules_manager = Arc::new(RulesManager::new(&config.general.rules_path)?);
+        // Create a RulesManager for each module with a rules_path
+        let mut rules_managers = HashMap::new();
+        for (name, module) in &config.modules {
+            let rules_path = module
+                .settings
+                .get("rules_path")
+                .and_then(|v| v.as_str())
+                .or({
+                    if !module.rules_path.is_empty() {
+                        Some(module.rules_path.as_str())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or("");
+            if !rules_path.is_empty() {
+                rules_managers.insert(name.clone(), Arc::new(RulesManager::new(rules_path)?));
+            }
+        }
         let module_manager = Arc::new(Mutex::new(ModuleManager::new()));
 
         Ok(Self {
             config,
-            rules_manager,
+            rules_managers,
             module_manager,
         })
     }
@@ -89,18 +101,6 @@ impl Engine {
     pub fn register_all_modules(&self) -> Result<()> {
         let mut module_manager = self.module_manager.lock().unwrap();
 
-        // Register the IPTables module
-        if self
-            .config
-            .modules
-            .get("iptables")
-            .is_some_and(|m| m.enabled)
-        {
-            debug!("Registering IPTables module");
-            let iptables_module = IptablesModule::new(self.config.clone())?;
-            module_manager.register_module("iptables", Box::new(iptables_module))?;
-        }
-
         // Register the Logging module
         if self
             .config
@@ -113,130 +113,141 @@ impl Engine {
             module_manager.register_module("logging", Box::new(logging_module))?;
         }
 
+        // Register the Netshield module
+        if self
+            .config
+            .modules
+            .get("netshield")
+            .is_some_and(|m| m.enabled)
+        {
+            debug!("Registering Netshield module");
+            let bpf_path = "/etc/fortexa/netshield_xdp.o"; // Update as needed or get from config
+            let rules_path = "/var/lib/fortexa/netshield_rules.json".to_string();
+            match NetshieldModule::with_xdp(bpf_path, rules_path) {
+                Ok(netshield_module) => {
+                    module_manager.register_module("netshield", Box::new(netshield_module))?;
+                    info!("[Engine] Netshield XDP attached and registered.");
+                }
+                Err(e) => {
+                    log::error!("[Engine] Failed to attach/register Netshield XDP: {}", e);
+                }
+            }
+        }
+
         Ok(())
     }
 
     /// Apply all rules
     pub fn apply_rules(&self) -> Result<()> {
-        let rules = self.rules_manager.get_enabled_rules()?;
-
-        let module_manager = self.module_manager.lock().unwrap();
-
-        for module_name in module_manager.get_module_names() {
-            if let Some(module) = module_manager.get_module(&module_name) {
+        // Collect module names first to avoid double-locking
+        let module_names = {
+            let module_manager = self.module_manager.lock().unwrap();
+            module_manager.get_module_names()
+        };
+        // Apply rules to all modules except netshield
+        for module_name in &module_names {
+            if module_name == "netshield" {
+                continue;
+            }
+            let module_manager = self.module_manager.lock().unwrap();
+            if let Some(module) = module_manager.get_module(module_name) {
                 debug!("Applying rules to module: {}", module_name);
-                module.apply_rules(&rules)?;
+                let manager = self.rules_managers.get(module_name).cloned();
+                if let Some(manager) = manager {
+                    module.apply_rules(&manager.get_enabled_rules()?)?;
+                }
             }
         }
-
+        // Now, apply rules to netshield (requires mutable access)
+        if module_names.iter().any(|n| n == "netshield") {
+            // Ensure no other references to self/module_manager are held here
+            let mut module_manager = self.module_manager.lock().unwrap();
+            if let Some(module) = module_manager.get_module_mut("netshield") {
+                if let Some(netshield) = module
+                    .as_any_mut()
+                    .downcast_mut::<crate::modules::netshield::NetshieldModule>(
+                ) {
+                    info!("[Engine] Applying all Netshield rules to eBPF/XDP map");
+                    match crate::modules::netshield::apply_all_rules(netshield) {
+                        Ok(_) => info!("[Engine] Netshield rules applied successfully."),
+                        Err(e) => log::error!("[Engine] Failed to apply Netshield rules: {}", e),
+                    }
+                } else {
+                    log::error!("[Engine] Failed to downcast to NetshieldModule");
+                }
+            } else {
+                log::warn!(
+                    "[Engine] Netshield XDP is not attached; rules not applied to eBPF/XDP."
+                );
+            }
+        }
         Ok(())
     }
 
+    /// Helper to get a rules manager for a module
+    pub fn get_rules_manager(&self, module: &str) -> Option<Arc<RulesManager>> {
+        self.rules_managers.get(module).cloned()
+    }
+
     /// Add a rule
-    pub fn add_rule(&self, rule: Rule) -> Result<String> {
-        let rule_id = self.rules_manager.add_rule(rule.clone())?;
+    pub fn add_rule(&self, module: &str, rule: Rule) -> Result<String> {
+        let manager = self
+            .get_rules_manager(module)
+            .ok_or_else(|| anyhow::anyhow!("No rules manager for module: {}", module))?;
+        let rule_id = manager.add_rule(rule.clone())?;
         self.apply_rules()?;
         Ok(rule_id)
     }
 
     /// Delete a rule
-    pub fn delete_rule(&self, rule_id: &str) -> Result<()> {
-        self.rules_manager.delete_rule(rule_id)?;
+    pub fn delete_rule(&self, module: &str, rule_id: &str) -> Result<()> {
+        let manager = self
+            .get_rules_manager(module)
+            .ok_or_else(|| anyhow::anyhow!("No rules manager for module: {}", module))?;
+        manager.delete_rule(rule_id)?;
         self.apply_rules()?;
         Ok(())
     }
 
     /// Update a rule
-    pub fn update_rule(&self, rule: Rule) -> Result<()> {
-        self.rules_manager.update_rule(rule)?;
+    pub fn update_rule(&self, module: &str, rule: Rule) -> Result<()> {
+        let manager = self
+            .get_rules_manager(module)
+            .ok_or_else(|| anyhow::anyhow!("No rules manager for module: {}", module))?;
+        manager.update_rule(rule)?;
         self.apply_rules()?;
         Ok(())
     }
 
     /// List all rules
-    pub fn list_rules(&self) -> Result<Vec<Rule>> {
-        self.rules_manager.list_rules()
+    pub fn list_rules(&self, module: &str) -> Result<Vec<Rule>> {
+        let manager = self
+            .get_rules_manager(module)
+            .ok_or_else(|| anyhow::anyhow!("No rules manager for module: {}", module))?;
+        manager.list_rules()
     }
 
     /// Delete all rules
-    pub fn reset_rules(&self) -> Result<()> {
-        self.rules_manager.reset_rules()?;
+    pub fn reset_rules(&self, module: &str) -> Result<()> {
+        let manager = self
+            .get_rules_manager(module)
+            .ok_or_else(|| anyhow::anyhow!("No rules manager for module: {}", module))?;
+        manager.reset_rules()?;
         self.apply_rules()?;
         Ok(())
     }
 
     /// Get a rule by ID
-    pub fn get_rule(&self, rule_id: &str) -> Result<Rule> {
-        self.rules_manager.get_rule(rule_id)
+    pub fn get_rule(&self, module: &str, rule_id: &str) -> Result<Rule> {
+        let manager = self
+            .get_rules_manager(module)
+            .ok_or_else(|| anyhow::anyhow!("No rules manager for module: {}", module))?;
+        manager.get_rule(rule_id)
     }
 
     /// Get the configuration
     pub fn get_config(&self) -> Arc<Config> {
         self.config.clone()
-    }
-
-    /// Add a rule with auto_create_chain option (for REST API only)
-    pub fn add_rule_with_auto_create(
-        &self,
-        rule: Rule,
-        auto_create_chain: bool,
-        reference_from: Option<String>,
-    ) -> Result<String> {
-        let rule_id = self.rules_manager.add_rule(rule.clone())?;
-        let rules = self.rules_manager.get_enabled_rules()?;
-        let module_manager = self.module_manager.lock().unwrap();
-        for module_name in module_manager.get_module_names() {
-            if let Some(module) = module_manager.get_module(&module_name) {
-                if module_name == "iptables" {
-                    // Downcast to IptablesModule
-                    if let Some(iptables) = module
-                        .as_any()
-                        .downcast_ref::<crate::modules::iptables::IptablesModule>()
-                    {
-                        iptables.apply_rules_with_auto_create(
-                            &rules,
-                            auto_create_chain,
-                            reference_from.as_deref(),
-                        )?;
-                        continue;
-                    }
-                }
-                module.apply_rules(&rules)?;
-            }
-        }
-        Ok(rule_id)
-    }
-
-    /// Update a rule with auto_create_chain option (for REST API only)
-    pub fn update_rule_with_auto_create(
-        &self,
-        rule: Rule,
-        auto_create_chain: bool,
-        reference_from: Option<String>,
-    ) -> Result<()> {
-        self.rules_manager.update_rule(rule)?;
-        let rules = self.rules_manager.get_enabled_rules()?;
-        let module_manager = self.module_manager.lock().unwrap();
-        for module_name in module_manager.get_module_names() {
-            if let Some(module) = module_manager.get_module(&module_name) {
-                if module_name == "iptables" {
-                    // Downcast to IptablesModule
-                    if let Some(iptables) = module
-                        .as_any()
-                        .downcast_ref::<crate::modules::iptables::IptablesModule>()
-                    {
-                        iptables.apply_rules_with_auto_create(
-                            &rules,
-                            auto_create_chain,
-                            reference_from.as_deref(),
-                        )?;
-                        continue;
-                    }
-                }
-                module.apply_rules(&rules)?;
-            }
-        }
-        Ok(())
     }
 }
 

@@ -24,7 +24,7 @@ uuid = { version = "1.16", features = ["v4"] }
 
 # Module-specific dependencies
 # IPTables
-iptables = "0.5"
+# Removed: iptables = "0.5"
 regex = "1.10"
 
 # Logging

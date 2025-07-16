@@ -7,8 +7,6 @@ A modern firewall solution built with Rust for superior performance and memory s
 
 > **Note:** For the latest and most complete REST API documentation, see [API.md](./API.md).
 
-Kernel-Level Blocking: Handled by FirewallManager via iptables.
-
 Daemon Logging:
 
 Monitors all traffic on the network interface.
@@ -38,7 +36,7 @@ http://localhost:8080
 
 ## Global Notes
 
-- All modifications automatically sync firewall rules to iptables and update `rules.json` and `chains.json`.
+- All modifications automatically sync firewall rules and update `rules.json`.
 - Whitelist always takes priority over blocklist (a whitelisted IP/port is never blocked).
 - Only supply the fields you want to change for append/delete.
 
@@ -46,23 +44,8 @@ http://localhost:8080
 
 ## Security
 
-- The API must be run with root privileges to manage iptables.
+- The API must be run with root privileges to manage network filtering.
 - It is recommended to restrict network access (use localhost or firewall/API gateway for access control).
-
----
-
-## Test Chain Cleanup (for Developers)
-
-If you run integration/system tests that create iptables chains with the prefix `FORTEXA_TST_`, you can clean up all test chains and rules with:
-
-```sh
-sudo iptables-save | grep -v 'FORTEXA_TST_.*' | sudo iptables-restore -w
-```
-
-**Important:**
-- Only run this command after all tests and after the REST API server is fully stopped.
-- Running this during server operation will break the firewall API and may cause 500 errors.
-- This command removes all chains and rules matching the test prefix, ensuring a clean state for future test runs.
 
 ---
 

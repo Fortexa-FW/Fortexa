@@ -8,14 +8,15 @@ use crate::modules::Module;
 use anyhow::Result;
 use aya::maps::HashMap as BpfHashMap;
 use aya::programs::xdp::XdpLinkId;
-use aya::{Bpf, programs::Xdp};
+use aya::{Ebpf, programs::Xdp};
 use bincode::config;
 use if_addrs::get_if_addrs;
 use std::convert::TryInto;
 use std::sync::Mutex;
 
 pub struct NetshieldModule {
-    pub bpf: Mutex<Option<Bpf>>,
+    pub rules_path: String,
+    pub bpf: Mutex<Option<Ebpf>>,
     pub attached_links: Mutex<Vec<XdpLinkId>>,
 }
 
@@ -23,14 +24,15 @@ impl NetshieldModule {
     /// Basic constructor (for legacy/tests)
     pub fn new() -> Self {
         NetshieldModule {
+            rules_path: "/var/lib/fortexa/netshield_rules.json".to_string(),
             bpf: Mutex::new(None),
             attached_links: Mutex::new(Vec::new()),
         }
     }
 
     /// Advanced constructor: load eBPF and attach to all interfaces
-    pub fn with_xdp(bpf_path: &str) -> anyhow::Result<Self> {
-        let mut bpf = Bpf::load_file(bpf_path)?;
+    pub fn with_xdp(bpf_path: &str, rules_path: String) -> anyhow::Result<Self> {
+        let mut bpf = Ebpf::load_file(bpf_path)?;
         let mut attached_links = Vec::new();
         for iface in get_if_addrs()? {
             let name = iface.name.clone();
@@ -43,6 +45,7 @@ impl NetshieldModule {
             attached_links.push(link_id);
         }
         Ok(Self {
+            rules_path,
             bpf: Mutex::new(Some(bpf)),
             attached_links: Mutex::new(attached_links),
         })
@@ -52,7 +55,7 @@ impl NetshieldModule {
     pub fn detach_all(self, bpf_path: &str) -> anyhow::Result<()> {
         let attached_links = self.attached_links.into_inner().unwrap();
         for link_id in attached_links {
-            let mut bpf = Bpf::load_file(bpf_path)?;
+            let mut bpf = Ebpf::load_file(bpf_path)?;
             let program: &mut Xdp = bpf.program_mut("netshield_xdp").unwrap().try_into()?;
             program.detach(link_id)?;
         }
@@ -105,7 +108,8 @@ impl Default for NetshieldModule {
 
 impl Module for NetshieldModule {
     fn init(&self) -> Result<()> {
-        crate::modules::netshield::apply_all_rules(self).map_err(anyhow::Error::msg)?;
+        let mut module = NetshieldModule::new();
+        crate::modules::netshield::apply_all_rules(&mut module).map_err(anyhow::Error::msg)?;
         Ok(())
     }
 
@@ -115,6 +119,10 @@ impl Module for NetshieldModule {
     }
 
     fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
     }
 }

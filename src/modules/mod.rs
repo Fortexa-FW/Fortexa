@@ -5,7 +5,6 @@ use std::collections::HashMap;
 
 use crate::core::rules::Rule;
 
-pub mod iptables;
 pub mod logging;
 pub mod netshield;
 
@@ -19,6 +18,9 @@ pub trait Module: Send + Sync {
 
     /// For downcasting
     fn as_any(&self) -> &dyn std::any::Any;
+
+    /// For mutable downcasting
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
 }
 
 /// Module manager
@@ -45,6 +47,11 @@ impl ModuleManager {
     /// Get a module by name
     pub fn get_module(&self, name: &str) -> Option<&dyn Module> {
         self.modules.get(name).map(|m| m.as_ref())
+    }
+
+    /// Get a mutable module by name
+    pub fn get_module_mut(&mut self, name: &str) -> Option<&mut Box<dyn Module>> {
+        self.modules.get_mut(name)
     }
 
     /// Get all module names

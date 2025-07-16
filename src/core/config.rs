@@ -26,9 +26,6 @@ pub struct GeneralConfig {
 
     /// The log level
     pub log_level: String,
-
-    /// The rules storage path
-    pub rules_path: String,
 }
 
 /// Module-specific configuration
@@ -40,9 +37,10 @@ pub struct ModuleConfig {
     /// Module-specific settings
     #[serde(flatten)]
     pub settings: HashMap<String, serde_json::Value>,
-    /// List of custom chains to create (optional, iptables only)
+
+    /// The rules storage path (optional only for module who need)
     #[serde(default)]
-    pub custom_chains: Option<Vec<String>>,
+    pub rules_path: String,
 }
 
 /// Service configuration
@@ -96,20 +94,8 @@ impl Config {
             general: GeneralConfig {
                 enabled: true,
                 log_level: "info".to_string(),
-                rules_path: "/var/lib/fortexa/rules.json".to_string(),
             },
             modules: HashMap::from([
-                (
-                    "iptables".to_string(),
-                    ModuleConfig {
-                        enabled: true,
-                        settings: HashMap::from([(
-                            "chain_prefix".to_string(),
-                            serde_json::Value::String("FORTEXA".to_string()),
-                        )]),
-                        custom_chains: None,
-                    },
-                ),
                 (
                     "logging".to_string(),
                     ModuleConfig {
@@ -118,7 +104,20 @@ impl Config {
                             "log_file".to_string(),
                             serde_json::Value::String("/var/log/fortexa/firewall.log".to_string()),
                         )]),
-                        custom_chains: None,
+                        rules_path: "".to_string(),
+                    },
+                ),
+                (
+                    "netshield".to_string(),
+                    ModuleConfig {
+                        enabled: true,
+                        settings: HashMap::from([(
+                            "rules_path".to_string(),
+                            serde_json::Value::String(
+                                "/var/lib/fortexa/netshield_rules.json".to_string(),
+                            ),
+                        )]),
+                        rules_path: "".to_string(),
                     },
                 ),
             ]),

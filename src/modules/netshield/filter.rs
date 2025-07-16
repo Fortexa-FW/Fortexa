@@ -2,7 +2,7 @@
 
 use crate::modules::netshield::NetshieldModule;
 use bincode::Encode;
-use log::info;
+use log::{debug, info};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -69,6 +69,7 @@ const RULES_FILE: &str = "/var/lib/fortexa/filter_rules.json";
 
 /// Load all current network filtering rules from the rules file.
 pub fn get_rules() -> Vec<NetshieldRule> {
+    debug!("[Netshield] get_rules() called");
     if let Ok(data) = fs::read_to_string(RULES_FILE) {
         serde_json::from_str(&data).unwrap_or_default()
     } else {
@@ -78,6 +79,7 @@ pub fn get_rules() -> Vec<NetshieldRule> {
 
 /// Save all rules to the rules file.
 fn save_rules(rules: &[NetshieldRule]) -> Result<(), String> {
+    debug!("[Netshield] save_rules() called (count={})", rules.len());
     let json = serde_json::to_string_pretty(rules).map_err(|e| e.to_string())?;
     let path = Path::new(RULES_FILE);
     if let Some(parent) = path.parent() {
@@ -90,6 +92,10 @@ fn save_rules(rules: &[NetshieldRule]) -> Result<(), String> {
 
 /// Add a new network filtering rule.
 pub fn add_rule(module: &mut NetshieldModule, mut rule: NetshieldRule) -> Result<(), String> {
+    debug!(
+        "[Netshield] add_rule() called: name={}, id={}",
+        rule.name, rule.id
+    );
     let mut rules = get_rules();
     if rule.id.is_empty() {
         rule.id = Uuid::new_v4().to_string();
@@ -106,6 +112,7 @@ pub fn add_rule(module: &mut NetshieldModule, mut rule: NetshieldRule) -> Result
 /// Delete a network filtering rule by id.
 /// This removes the rule from both the persistent file and the eBPF/XDP map.
 pub fn delete_rule(module: &mut NetshieldModule, rule_id: &str) -> Result<(), String> {
+    debug!("[Netshield] delete_rule() called: id={}", rule_id);
     let mut rules = get_rules();
     let len_before = rules.len();
     let index = rules.iter().position(|r| r.id == rule_id);
@@ -123,15 +130,13 @@ pub fn delete_rule(module: &mut NetshieldModule, rule_id: &str) -> Result<(), St
 
 /// Get a rule by id.
 pub fn get_rule(id: &str) -> Option<NetshieldRule> {
+    debug!("[Netshield] get_rule() called: id={}", id);
     get_rules().into_iter().find(|r| r.id == id)
 }
 
 /// Update a rule by id. Replaces the rule with the same id.
-pub fn update_rule(
-    module: &mut NetshieldModule,
-    id: &str,
-    updated: NetshieldRule,
-) -> Result<(), String> {
+pub fn update_rule(id: &str, updated: NetshieldRule) -> Result<(), String> {
+    debug!("[Netshield] update_rule() called: id={}", id);
     let mut rules = get_rules();
     let mut found = false;
     for rule in &mut rules {
@@ -143,8 +148,7 @@ pub fn update_rule(
     }
     if found {
         save_rules(&rules)?;
-        // Update eBPF/XDP
-        module.update_rules_map(&rules).map_err(|e| e.to_string())?;
+        // TODO: Update eBPF/XDP
         Ok(())
     } else {
         Err("Rule not found".to_string())
@@ -153,6 +157,7 @@ pub fn update_rule(
 
 /// Get all unique groups from rules.
 pub fn get_groups() -> Vec<String> {
+    debug!("[Netshield] get_groups() called");
     let mut groups: Vec<String> = get_rules().into_iter().filter_map(|r| r.group).collect();
     groups.sort();
     groups.dedup();
@@ -161,25 +166,23 @@ pub fn get_groups() -> Vec<String> {
 
 /// Get all rules in a specific group.
 pub fn get_rules_by_group(group: &str) -> Vec<NetshieldRule> {
+    debug!("[Netshield] get_rules_by_group() called: group={}", group);
     get_rules()
         .into_iter()
         .filter(|r| r.group.as_deref() == Some(group))
         .collect()
 }
 
-/// Apply a single NetshieldRule to the system (update eBPF/XDP map)
-pub fn apply_rule_to_system(module: &NetshieldModule, rule: &NetshieldRule) -> Result<(), String> {
-    // For now, update the whole map with just this rule (or you can update the full rules list)
-    log::info!(
-        "[Netshield] Applying rule to eBPF/XDP: id={} name={} action={:?} direction={:?} src={:?} dst={:?} group={:?}",
-        rule.id,
-        rule.name,
-        rule.action,
-        rule.direction,
-        rule.source,
-        rule.destination,
-        rule.group
+/// Apply a single NetshieldRule to the system (placeholder for eBPF/XDP logic)
+pub fn apply_rule_to_system(
+    module: &mut NetshieldModule,
+    rule: &NetshieldRule,
+) -> Result<(), String> {
+    info!(
+        "[Netshield] Applying single rule to eBPF/XDP map: id={}, name={}",
+        rule.id, rule.name
     );
+    debug!("[Netshield] Rule details: {:?}", rule);
     module
         .update_rules_map(&[rule.clone()])
         .map_err(|e| e.to_string())?;
@@ -187,12 +190,18 @@ pub fn apply_rule_to_system(module: &NetshieldModule, rule: &NetshieldRule) -> R
 }
 
 /// Apply all rules to the system.
-pub fn apply_all_rules(module: &NetshieldModule) -> Result<(), String> {
+pub fn apply_all_rules(module: &mut NetshieldModule) -> Result<(), String> {
     let rules = get_rules();
+    info!(
+        "[Netshield] Applying all rules to eBPF/XDP map (count={})",
+        rules.len()
+    );
     for rule in &rules {
-        if rule.enabled {
-            apply_rule_to_system(module, rule)?;
-        }
+        debug!(
+            "[Netshield] Rule: id={}, name={}, enabled={}",
+            rule.id, rule.name, rule.enabled
+        );
     }
+    module.update_rules_map(&rules).map_err(|e| e.to_string())?;
     Ok(())
 }

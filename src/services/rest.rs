@@ -15,14 +15,12 @@ use tower_http::trace::TraceLayer;
 
 use crate::core::engine::Engine;
 use crate::core::rules::{Action, Direction, Rule};
-use crate::modules::iptables::filter::CustomChainEntry;
-use crate::modules::netshield::{self, NetshieldRule};
+use crate::modules::netshield;
 
 /// REST service
-#[derive(Clone)]
 pub struct RestService {
     /// The firewall engine
-    engine: Engine,
+    engine: Arc<Engine>,
 }
 
 /// API error response
@@ -75,15 +73,6 @@ pub struct RuleRequest {
     pub reference_from: Option<String>,
 }
 
-/// Custom chain request
-#[derive(Debug, Deserialize)]
-struct CustomChainRequest {
-    /// Custom chain name
-    name: String,
-    /// Optionally reference from a built-in chain (INPUT, OUTPUT, FORWARD)
-    reference_from: Option<String>,
-}
-
 #[derive(Debug, Deserialize)]
 pub struct NetshieldRuleRequest {
     pub id: Option<String>,
@@ -104,7 +93,7 @@ pub struct NetshieldRuleRequest {
 
 impl RestService {
     /// Create a new REST service
-    pub fn new(engine: Engine) -> Self {
+    pub fn new(engine: Arc<Engine>) -> Self {
         Self { engine }
     }
 
@@ -149,11 +138,6 @@ impl RestService {
             .route("/api/filter/rules/{id}", get(Self::get_rule))
             .route("/api/filter/rules/{id}", put(Self::update_rule))
             .route("/api/filter/rules/{id}", delete(Self::delete_rule))
-            .route("/api/filter/custom_chain", post(Self::create_custom_chain))
-            .route(
-                "/api/filter/custom_chain",
-                delete(Self::delete_custom_chain),
-            )
             .route("/api/netshield/rules", get(Self::list_netshield_rules))
             .route("/api/netshield/rules", post(Self::add_netshield_rule))
             .route("/api/netshield/rules", delete(Self::delete_netshield_rule))
@@ -168,11 +152,11 @@ impl RestService {
             )
             .route("/api/netshield/groups", get(Self::list_netshield_groups))
             .route(
-                "/api/netshield/groups/:group/rules",
+                "/api/netshield/groups/{group}/rules",
                 get(Self::list_netshield_rules_by_group),
             )
             .layer(TraceLayer::new_for_http())
-            .with_state(Arc::new(self.engine));
+            .with_state(self.engine.clone());
         axum::serve(listener, app)
             .with_graceful_shutdown(shutdown)
             .await
@@ -183,7 +167,7 @@ impl RestService {
 
     /// List all rules
     async fn list_rules(State(engine): State<Arc<Engine>>) -> impl IntoResponse {
-        match engine.list_rules() {
+        match engine.list_rules("filter") {
             Ok(rules) => (StatusCode::OK, Json(rules)).into_response(),
             Err(e) => {
                 error!("Failed to list rules: {}", e);
@@ -200,7 +184,7 @@ impl RestService {
 
     /// Delete rules
     async fn reset_rules(State(engine): State<Arc<Engine>>) -> impl IntoResponse {
-        match engine.reset_rules() {
+        match engine.reset_rules("filter") {
             Ok(_) => (StatusCode::OK, Json(json!({"success": true}))).into_response(),
             Err(e) => {
                 error!("Failed to reset rules: {}", e);
@@ -220,8 +204,6 @@ impl RestService {
         State(engine): State<Arc<Engine>>,
         Json(rule_req): Json<RuleRequest>,
     ) -> impl IntoResponse {
-        let auto_create_chain = rule_req.auto_create_chain.unwrap_or(false);
-        let reference_from = rule_req.reference_from.clone();
         let rule = match rule_from_request(&rule_req) {
             Ok(r) => r,
             Err(msg) => {
@@ -232,7 +214,7 @@ impl RestService {
                     .into_response();
             }
         };
-        match engine.add_rule_with_auto_create(rule, auto_create_chain, reference_from) {
+        match engine.add_rule("filter", rule) {
             Ok(rule_id) => (StatusCode::CREATED, Json(json!({"id": rule_id}))).into_response(),
             Err(e) => {
                 error!("Failed to add rule: {}", e);
@@ -252,7 +234,7 @@ impl RestService {
         State(engine): State<Arc<Engine>>,
         Path(rule_id): Path<String>,
     ) -> impl IntoResponse {
-        match engine.get_rule(&rule_id) {
+        match engine.get_rule("filter", &rule_id) {
             Ok(rule) => (StatusCode::OK, Json(rule)).into_response(),
             Err(e) => {
                 error!("Failed to get rule {}: {}", rule_id, e);
@@ -273,9 +255,7 @@ impl RestService {
         Path(rule_id): Path<String>,
         Json(rule_req): Json<RuleRequest>,
     ) -> impl IntoResponse {
-        let auto_create_chain = rule_req.auto_create_chain.unwrap_or(false);
-        let reference_from = rule_req.reference_from.clone();
-        let mut rule = match engine.get_rule(&rule_id) {
+        let mut rule = match engine.get_rule("filter", &rule_id) {
             Ok(r) => r,
             Err(e) => {
                 return (
@@ -309,7 +289,7 @@ impl RestService {
         rule.action = new_rule.action;
         rule.enabled = new_rule.enabled;
         rule.priority = new_rule.priority;
-        match engine.update_rule_with_auto_create(rule, auto_create_chain, reference_from) {
+        match engine.update_rule("filter", rule) {
             Ok(_) => (StatusCode::OK, Json(json!({"success": true}))).into_response(),
             Err(e) => {
                 error!("Failed to update rule {}: {}", rule_id, e);
@@ -329,7 +309,7 @@ impl RestService {
         State(engine): State<Arc<Engine>>,
         Path(rule_id): Path<String>,
     ) -> impl IntoResponse {
-        match engine.delete_rule(&rule_id) {
+        match engine.delete_rule("filter", &rule_id) {
             Ok(_) => (StatusCode::OK, Json(json!({"success": true}))).into_response(),
             Err(e) => {
                 error!("Failed to delete rule {}: {}", rule_id, e);
@@ -344,136 +324,17 @@ impl RestService {
         }
     }
 
-    /// Create a custom chain
-    async fn create_custom_chain(
-        State(engine): State<Arc<Engine>>,
-        Json(req): Json<CustomChainRequest>,
-    ) -> impl IntoResponse {
-        let config = engine.get_config();
-        let prefix = config
-            .modules
-            .get("iptables")
-            .and_then(|m| m.settings.get("chain_prefix"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("FORTEXA");
-        let chains_path = config
-            .modules
-            .get("iptables")
-            .and_then(|m| m.settings.get("chains_path"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("/var/lib/fortexa/chains.json");
-        let upper_name = req.name.to_uppercase();
-        let chain_name = if upper_name.starts_with(prefix) {
-            upper_name
-        } else {
-            format!("{}_{}", prefix, upper_name)
-        };
-        let filter = match crate::modules::iptables::IptablesFilter::new(prefix) {
-            Ok(f) => f,
-            Err(e) => {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({"error": e.to_string()})),
-                )
-                    .into_response();
-            }
-        };
-        let ref_from = req.reference_from.as_deref();
-        match filter.create_custom_chain(&chain_name, ref_from) {
-            Ok(_) => {
-                // Add to chains.json
-                let entry = CustomChainEntry {
-                    name: chain_name.clone(),
-                    reference_from: req.reference_from.clone(),
-                };
-                if let Err(e) = crate::modules::iptables::filter::IptablesFilter::add_chain_to_file(
-                    chains_path,
-                    &entry,
-                ) {
-                    error!("Failed to update chains.json: {}", e);
-                }
-                (
-                    StatusCode::CREATED,
-                    Json(json!({"success": true, "chain": chain_name})),
-                )
-                    .into_response()
-            }
-            Err(e) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": e.to_string()})),
-            )
-                .into_response(),
-        }
-    }
-
-    /// Delete a custom chain
-    async fn delete_custom_chain(
-        State(engine): State<Arc<Engine>>,
-        Json(req): Json<CustomChainRequest>,
-    ) -> impl IntoResponse {
-        let config = engine.get_config();
-        let prefix = config
-            .modules
-            .get("iptables")
-            .and_then(|m| m.settings.get("chain_prefix"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("FORTEXA");
-        let chains_path = config
-            .modules
-            .get("iptables")
-            .and_then(|m| m.settings.get("chains_path"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("/var/lib/fortexa/chains.json");
-        let upper_name = req.name.to_uppercase();
-        let chain_name = if upper_name.starts_with(prefix) {
-            upper_name
-        } else {
-            format!("{}_{}", prefix, upper_name)
-        };
-        let filter = match crate::modules::iptables::IptablesFilter::new(prefix) {
-            Ok(f) => f,
-            Err(e) => {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({"error": e.to_string()})),
-                )
-                    .into_response();
-            }
-        };
-        let ref_from = req.reference_from.as_deref();
-        match filter.delete_custom_chain(&chain_name, ref_from) {
-            Ok(_) => {
-                // Remove from chains.json
-                if let Err(e) =
-                    crate::modules::iptables::filter::IptablesFilter::remove_chain_from_file(
-                        chains_path,
-                        &chain_name,
-                    )
-                {
-                    error!("Failed to update chains.json: {}", e);
-                }
-                (
-                    StatusCode::OK,
-                    Json(json!({"success": true, "chain": chain_name})),
-                )
-                    .into_response()
-            }
-            Err(e) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": e.to_string()})),
-            )
-                .into_response(),
-        }
-    }
-
     /// List all netshield rules
-    async fn list_netshield_rules() -> impl IntoResponse {
+    async fn list_netshield_rules(State(_engine): State<Arc<Engine>>) -> impl IntoResponse {
         let rules = netshield::get_rules();
         (StatusCode::OK, Json(rules))
     }
 
     /// Add a netshield rule
-    async fn add_netshield_rule(Json(req): Json<NetshieldRuleRequest>) -> impl IntoResponse {
+    async fn add_netshield_rule(
+        State(_engine): State<Arc<Engine>>,
+        Json(req): Json<NetshieldRuleRequest>,
+    ) -> impl IntoResponse {
         let direction = match req.direction.to_lowercase().as_str() {
             "incoming" => netshield::Direction::Incoming,
             "outgoing" => netshield::Direction::Outgoing,
@@ -517,8 +378,8 @@ impl RestService {
             parameters: req.parameters.unwrap_or_default(),
             group: req.group,
         };
-        let mut netshield = netshield::NetshieldModule::new();
-        match netshield::add_rule(&mut netshield, rule) {
+        let mut module = netshield::NetshieldModule::new();
+        match netshield::add_rule(&mut module, rule) {
             Ok(_) => (StatusCode::CREATED, Json(json!({"success": true}))).into_response(),
             Err(e) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -529,10 +390,13 @@ impl RestService {
     }
 
     /// Delete a netshield rule
-    async fn delete_netshield_rule(Json(req): Json<NetshieldRuleRequest>) -> impl IntoResponse {
+    async fn delete_netshield_rule(
+        State(_engine): State<Arc<Engine>>,
+        Json(req): Json<NetshieldRuleRequest>,
+    ) -> impl IntoResponse {
+        let mut module = netshield::NetshieldModule::new();
         if let Some(id) = req.id {
-            let mut netshield = netshield::NetshieldModule::new();
-            match netshield::delete_rule(&mut netshield, &id) {
+            match netshield::delete_rule(&mut module, &id) {
                 Ok(_) => (StatusCode::OK, Json(json!({"success": true}))).into_response(),
                 Err(e) => (
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -552,7 +416,10 @@ impl RestService {
     }
 
     /// Get a netshield rule by id
-    async fn get_netshield_rule(Path(id): Path<String>) -> impl IntoResponse {
+    async fn get_netshield_rule(
+        State(_engine): State<Arc<Engine>>,
+        Path(id): Path<String>,
+    ) -> impl IntoResponse {
         match netshield::get_rule(&id) {
             Some(rule) => (StatusCode::OK, Json(rule)).into_response(),
             None => (
@@ -567,6 +434,7 @@ impl RestService {
 
     /// Update a netshield rule by id
     async fn update_netshield_rule(
+        State(_engine): State<Arc<Engine>>,
         Path(id): Path<String>,
         Json(req): Json<NetshieldRuleRequest>,
     ) -> impl IntoResponse {
@@ -613,30 +481,35 @@ impl RestService {
             parameters: req.parameters.unwrap_or_default(),
             group: req.group,
         };
-        let mut netshield = netshield::NetshieldModule::new();
-        match netshield::update_rule(&mut netshield, &id, updated) {
+        match netshield::update_rule(&id, updated) {
             Ok(_) => (StatusCode::OK, Json(json!({"success": true}))).into_response(),
             Err(e) => (StatusCode::NOT_FOUND, Json(ErrorResponse { message: e })).into_response(),
         }
     }
 
     /// Delete a netshield rule by id (path param)
-    async fn delete_netshield_rule_by_id(Path(id): Path<String>) -> impl IntoResponse {
-        let mut netshield = netshield::NetshieldModule::new();
-        match netshield::delete_rule(&mut netshield, &id) {
+    async fn delete_netshield_rule_by_id(
+        State(_engine): State<Arc<Engine>>,
+        Path(id): Path<String>,
+    ) -> impl IntoResponse {
+        let mut module = netshield::NetshieldModule::new();
+        match netshield::delete_rule(&mut module, &id) {
             Ok(_) => (StatusCode::OK, Json(json!({"success": true}))).into_response(),
             Err(e) => (StatusCode::NOT_FOUND, Json(ErrorResponse { message: e })).into_response(),
         }
     }
 
     /// List all netshield groups
-    async fn list_netshield_groups() -> impl IntoResponse {
+    async fn list_netshield_groups(State(_engine): State<Arc<Engine>>) -> impl IntoResponse {
         let groups = netshield::get_groups();
         (StatusCode::OK, Json(groups))
     }
 
     /// List all netshield rules in a group
-    async fn list_netshield_rules_by_group(Path(group): Path<String>) -> impl IntoResponse {
+    async fn list_netshield_rules_by_group(
+        State(_engine): State<Arc<Engine>>,
+        Path(group): Path<String>,
+    ) -> impl IntoResponse {
         let rules = netshield::get_rules_by_group(&group);
         (StatusCode::OK, Json(rules))
     }
