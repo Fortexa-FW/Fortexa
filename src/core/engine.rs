@@ -121,9 +121,8 @@ impl Engine {
             .is_some_and(|m| m.enabled)
         {
             debug!("Registering Netshield module");
-            let bpf_path = "/etc/fortexa/netshield_xdp.o"; // Update as needed or get from config
             let rules_path = "/var/lib/fortexa/netshield_rules.json".to_string();
-            match NetshieldModule::with_xdp(bpf_path, rules_path) {
+            match NetshieldModule::with_xdp(rules_path) {
                 Ok(netshield_module) => {
                     module_manager.register_module("netshield", Box::new(netshield_module))?;
                     info!("[Engine] Netshield XDP attached and registered.");
