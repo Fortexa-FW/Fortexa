@@ -13,6 +13,7 @@ OBJ=target/bpfel-unknown-none/release/netshield_xdp.o
 DEST=/usr/lib/fortexa/netshield_xdp.o
 if [ -f "$OBJ" ]; then
     echo "Copying $OBJ to $DEST"
+    mkdir -p "/usr/lib/fortexa/"
     sudo cp "$OBJ" "$DEST"
 else
     echo "ERROR: $OBJ not found!"
