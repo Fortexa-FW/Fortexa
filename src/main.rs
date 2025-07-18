@@ -1,5 +1,7 @@
 use anyhow::Result;
 use fortexa::core::engine::Engine;
+use fortexa::core::rules::RulesManager;
+use fortexa::modules::netshield::security::NetshieldSecurityConfig;
 use fortexa::modules::netshield::{self, NetshieldModule};
 use fortexa::services::rest::RestService;
 use log::info;
@@ -24,7 +26,10 @@ async fn main() -> Result<()> {
 
     // Apply all Netshield rules at startup
     log::info!("[Startup] Applying all Netshield rules to eBPF/XDP map");
-    let mut module = NetshieldModule::new();
+    let rules_path = "/var/lib/fortexa/netshield_rules.json".to_string();
+    let security_config = NetshieldSecurityConfig::default();
+    let rules_manager = Arc::new(RulesManager::new(&rules_path)?);
+    let mut module = NetshieldModule::new(rules_path, security_config, rules_manager);
     match netshield::apply_all_rules(&mut module) {
         Ok(_) => log::info!("[Startup] Netshield rules applied successfully."),
         Err(e) => log::error!("[Startup] Failed to apply Netshield rules: {}", e),

@@ -7,39 +7,25 @@ use uuid::Uuid;
 use crate::storage::filedb::FileDB;
 
 /// Rule direction
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[repr(u8)]
 pub enum Direction {
-    /// Incoming traffic
-    Input,
-
-    /// Outgoing traffic
-    Output,
-
-    /// Forwarded traffic
-    Forward,
-
-    /// Custom chain
-    Custom(String),
+    Incoming = 0,
+    Outgoing = 1,
 }
 
 /// Rule action
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[repr(u8)]
 pub enum Action {
-    /// Accept the packet
-    Accept,
-
-    /// Drop the packet
-    Drop,
-
-    /// Reject the packet
-    Reject,
-
-    /// Log the packet
-    Log,
+    Block = 0,
+    Allow = 1,
+    Log = 3,
 }
 
 /// A firewall rule
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[repr(C)]
 pub struct Rule {
     /// Unique identifier for the rule
     pub id: String,
@@ -72,13 +58,28 @@ pub struct Rule {
     pub action: Action,
 
     /// Whether the rule is enabled
-    pub enabled: bool,
+    pub enabled: u8, // 0 = disabled, 1 = enabled
 
     /// Rule priority (lower numbers have higher priority)
     pub priority: i32,
 
     /// Module-specific parameters
     pub parameters: HashMap<String, String>,
+
+    /// Source IP address in network byte order, 0 for any
+    pub source_ip: u32,
+
+    /// Destination IP address in network byte order, 0 for any
+    pub destination_ip: u32,
+
+    /// Source port in network byte order, 0 for any
+    pub source_port_network: u16,
+
+    /// Destination port in network byte order, 0 for any
+    pub destination_port_network: u16,
+
+    /// IP protocol (TCP=6, UDP=17, etc.), 0 for any
+    pub protocol_number: u8,
 }
 
 impl Rule {
@@ -95,9 +96,14 @@ impl Rule {
             destination_port: None,
             protocol: None,
             action,
-            enabled: true,
+            enabled: 1,
             priority,
             parameters: HashMap::new(),
+            source_ip: 0,
+            destination_ip: 0,
+            source_port_network: 0,
+            destination_port_network: 0,
+            protocol_number: 0,
         }
     }
 
@@ -167,6 +173,6 @@ impl RulesManager {
     pub fn get_enabled_rules(&self) -> Result<Vec<Rule>> {
         let storage = self.storage.read().unwrap();
         let rules = storage.list_rules()?;
-        Ok(rules.into_iter().filter(|r| r.enabled).collect())
+        Ok(rules.into_iter().filter(|r| r.enabled == 1).collect())
     }
 }

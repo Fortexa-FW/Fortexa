@@ -4,6 +4,7 @@
 //!
 //! The NetshieldModule struct initializes the netshield module.
 
+use crate::core::rules::RulesManager;
 use crate::modules::Module;
 use anyhow::Result;
 use aya::maps::HashMap as BpfHashMap;
@@ -11,13 +12,14 @@ use aya::programs::xdp::XdpLinkId;
 use aya::{Ebpf, programs::Xdp};
 use bincode::config;
 use std::convert::TryInto;
+use std::sync::Arc;
 use std::sync::Mutex;
 
 #[cfg(feature = "ebpf_enabled")]
 use if_addrs::get_if_addrs;
 
 mod constants;
-mod security;
+pub mod security;
 use constants::{MAX_RULE_SIZE, NETSHIELD_PROGRAM_NAME, RULES_MAP_NAME};
 use security::NetshieldSecurityConfig;
 
@@ -26,36 +28,34 @@ pub struct NetshieldModule {
     pub bpf: Mutex<Option<Ebpf>>,
     pub attached_links: Mutex<Vec<XdpLinkId>>,
     pub security_config: NetshieldSecurityConfig,
+    /// Shared rules manager for all rule CRUD operations
+    pub rules_manager: Arc<RulesManager>,
 }
 
 impl NetshieldModule {
-    /// Basic constructor (for legacy/tests)
-    pub fn new() -> Self {
-        NetshieldModule {
-            rules_path: "/var/lib/fortexa/netshield_rules.json".to_string(),
-            bpf: Mutex::new(None),
-            attached_links: Mutex::new(Vec::new()),
-            security_config: NetshieldSecurityConfig::default(),
-        }
-    }
-
-    /// Constructor with custom security configuration
-    pub fn with_security_config(
+    /// Main constructor: requires a shared RulesManager
+    pub fn new(
         rules_path: String,
         security_config: NetshieldSecurityConfig,
+        rules_manager: Arc<RulesManager>,
     ) -> Self {
         NetshieldModule {
             rules_path,
             bpf: Mutex::new(None),
             attached_links: Mutex::new(Vec::new()),
             security_config,
+            rules_manager,
         }
     }
 
     /// Advanced constructor: load eBPF and attach to all interfaces
     #[cfg(feature = "ebpf_enabled")]
-    pub fn with_xdp(rules_path: String) -> anyhow::Result<Self> {
-        Self::with_xdp_secure(rules_path, NetshieldSecurityConfig::default())
+    pub fn with_xdp(
+        rules_path: String,
+        security_config: NetshieldSecurityConfig,
+        rules_manager: Arc<RulesManager>,
+    ) -> anyhow::Result<Self> {
+        Self::with_xdp_secure(rules_path, security_config, rules_manager)
     }
 
     /// Secure XDP constructor with explicit security configuration
@@ -63,6 +63,7 @@ impl NetshieldModule {
     pub fn with_xdp_secure(
         rules_path: String,
         security_config: NetshieldSecurityConfig,
+        rules_manager: Arc<RulesManager>,
     ) -> anyhow::Result<Self> {
         // Use embedded eBPF path from build script, fallback to default
         let bpf_path = option_env!("NETSHIELD_EBPF_PATH").unwrap_or("./netshield_xdp.o");
@@ -127,6 +128,7 @@ impl NetshieldModule {
             bpf: Mutex::new(Some(bpf)),
             attached_links: Mutex::new(attached_links),
             security_config,
+            rules_manager,
         })
     }
 
@@ -151,14 +153,10 @@ impl NetshieldModule {
 
     /// Fallback constructor when eBPF is not available
     #[cfg(not(feature = "ebpf_enabled"))]
-    pub fn with_xdp(rules_path: String) -> anyhow::Result<Self> {
-        Self::with_xdp_secure(rules_path, NetshieldSecurityConfig::default())
-    }
-
-    #[cfg(not(feature = "ebpf_enabled"))]
-    pub fn with_xdp_secure(
+    pub fn with_xdp(
         rules_path: String,
         security_config: NetshieldSecurityConfig,
+        rules_manager: Arc<RulesManager>,
     ) -> anyhow::Result<Self> {
         log::warn!("eBPF not available on this platform, falling back to basic mode");
         Ok(Self {
@@ -166,6 +164,7 @@ impl NetshieldModule {
             bpf: Mutex::new(None),
             attached_links: Mutex::new(Vec::new()),
             security_config,
+            rules_manager,
         })
     }
 
@@ -236,7 +235,10 @@ impl NetshieldModule {
 
             log::info!("Updated eBPF rules map with {} rules", rules.len());
         } else {
-            log::warn!("eBPF not loaded (bpf is None) in update_rules_map on instance {:p}", self);
+            log::warn!(
+                "eBPF not loaded (bpf is None) in update_rules_map on instance {:p}",
+                self
+            );
         }
         Ok(())
     }
@@ -270,10 +272,14 @@ impl NetshieldModule {
 
     /// Advanced constructor: load eBPF and attach to all interfaces, with custom eBPF path
     #[cfg(feature = "ebpf_enabled")]
-    pub fn with_xdp_and_ebpf_path(rules_path: String, ebpf_path: Option<String>) -> anyhow::Result<Self> {
-        let mut security_config = NetshieldSecurityConfig::default();
+    pub fn with_xdp_and_ebpf_path(
+        rules_path: String,
+        security_config: NetshieldSecurityConfig,
+        rules_manager: Arc<RulesManager>,
+        ebpf_path: Option<String>,
+    ) -> anyhow::Result<Self> {
+        let mut security_config = security_config;
         let bpf_path = if let Some(ref path) = ebpf_path {
-            // Add to allowed paths if not present
             if !security_config.allowed_ebpf_paths.contains(path) {
                 security_config.allowed_ebpf_paths.push(path.clone());
             }
@@ -281,13 +287,14 @@ impl NetshieldModule {
         } else {
             option_env!("NETSHIELD_EBPF_PATH").unwrap_or("./netshield_xdp.o")
         };
-        Self::with_xdp_secure_and_path(rules_path, security_config, bpf_path)
+        Self::with_xdp_secure_and_path(rules_path, security_config, rules_manager, bpf_path)
     }
 
     #[cfg(feature = "ebpf_enabled")]
     fn with_xdp_secure_and_path(
         rules_path: String,
         security_config: NetshieldSecurityConfig,
+        rules_manager: Arc<RulesManager>,
         bpf_path: &str,
     ) -> anyhow::Result<Self> {
         // Security check: validate eBPF path
@@ -337,25 +344,26 @@ impl NetshieldModule {
             bpf: Mutex::new(Some(bpf)),
             attached_links: Mutex::new(attached_links),
             security_config,
+            rules_manager,
         })
     }
 
-    /// Fallback for with_xdp_and_ebpf_path when eBPF is not enabled
-    #[cfg(not(feature = "ebpf_enabled"))]
-    pub fn with_xdp_and_ebpf_path(rules_path: String, _ebpf_path: Option<String>) -> anyhow::Result<Self> {
-        Self::with_xdp(rules_path)
-    }
-}
-
-impl Default for NetshieldModule {
-    fn default() -> Self {
-        Self::new()
+    /// Sync all rules from RulesManager to the eBPF map
+    pub fn sync_rules_to_ebpf(&self) -> anyhow::Result<()> {
+        let rules = self.rules_manager.list_rules()?;
+        let netshield_rules: Vec<NetshieldRule> =
+            rules.iter().map(convert_to_netshield_rule).collect();
+        self.update_rules_map(&netshield_rules)
     }
 }
 
 impl Module for NetshieldModule {
     fn init(&self) -> Result<()> {
-        let mut module = NetshieldModule::new();
+        let mut module = NetshieldModule::new(
+            self.rules_path.clone(),
+            self.security_config.clone(),
+            self.rules_manager.clone(),
+        );
         crate::modules::netshield::apply_all_rules(&mut module).map_err(anyhow::Error::msg)?;
         Ok(())
     }
@@ -380,3 +388,46 @@ pub use filter::{
     Action, Direction, NetshieldRule, add_rule, apply_all_rules, delete_rule, get_groups, get_rule,
     get_rules, get_rules_by_group, update_rule,
 };
+
+// Helper to convert core::rules::Rule to NetshieldRule
+fn convert_to_netshield_rule(rule: &crate::core::rules::Rule) -> NetshieldRule {
+    NetshieldRule {
+        id: rule.id.clone(),
+        name: rule.name.clone(),
+        description: rule.description.clone(),
+        direction: match rule.direction {
+            crate::core::rules::Direction::Incoming => Direction::Incoming,
+            crate::core::rules::Direction::Outgoing => Direction::Outgoing,
+        },
+        source: if rule.source_ip != 0 {
+            Some(std::net::Ipv4Addr::from(rule.source_ip).to_string())
+        } else {
+            None
+        },
+        destination: if rule.destination_ip != 0 {
+            Some(std::net::Ipv4Addr::from(rule.destination_ip).to_string())
+        } else {
+            None
+        },
+        source_port: if rule.source_port_network != 0 {
+            Some(rule.source_port_network)
+        } else {
+            None
+        },
+        destination_port: if rule.destination_port_network != 0 {
+            Some(rule.destination_port_network)
+        } else {
+            None
+        },
+        protocol: None, // or convert protocol_number to string if needed
+        action: match rule.action {
+            crate::core::rules::Action::Block => Action::Block,
+            crate::core::rules::Action::Allow => Action::Allow,
+            crate::core::rules::Action::Log => Action::Log,
+        },
+        enabled: rule.enabled == 1,
+        priority: rule.priority,
+        parameters: rule.parameters.clone(),
+        group: None,
+    }
+}

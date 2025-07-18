@@ -6,12 +6,12 @@ use std::fs::File;
 use std::io::Write;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use std::io;
 
 use crate::core::config::Config;
 use crate::core::rules::{Rule, RulesManager};
 use crate::modules::ModuleManager;
 use crate::modules::logging::LoggingModule;
+use crate::modules::netshield::security::NetshieldSecurityConfig;
 use crate::modules::netshield::{NetshieldModule, NetshieldRule};
 
 const DEFAULT_CONFIG: &str = r#"
@@ -83,7 +83,12 @@ impl Engine {
                     }
                     match std::fs::copy(&src, ebpf_target) {
                         Ok(_) => log::info!("Copied eBPF object from {} to {}", src, ebpf_target),
-                        Err(e) => log::error!("Failed to copy eBPF object from {} to {}: {}", src, ebpf_target, e),
+                        Err(e) => log::error!(
+                            "Failed to copy eBPF object from {} to {}: {}",
+                            src,
+                            ebpf_target,
+                            e
+                        ),
                     }
                 } else {
                     log::warn!("Could not find eBPF object to copy to {}", ebpf_target);
@@ -161,12 +166,30 @@ impl Engine {
         {
             debug!("Registering Netshield module");
             let netshield_cfg = self.config.modules.get("netshield").unwrap();
-            let rules_path = netshield_cfg.settings.get("rules_path")
+            let rules_path = netshield_cfg
+                .settings
+                .get("rules_path")
                 .and_then(|v| v.as_str())
-                .or_else(|| if !netshield_cfg.rules_path.is_empty() { Some(netshield_cfg.rules_path.as_str()) } else { None })
-                .unwrap_or("").to_string();
+                .or({
+                    if !netshield_cfg.rules_path.is_empty() {
+                        Some(netshield_cfg.rules_path.as_str())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or("")
+                .to_string();
             let ebpf_path = netshield_cfg.ebpf_path.clone();
-            match NetshieldModule::with_xdp_and_ebpf_path(rules_path, ebpf_path) {
+            let security_config = NetshieldSecurityConfig::default();
+            let rules_manager = self
+                .get_rules_manager("netshield")
+                .expect("No rules manager for netshield");
+            match NetshieldModule::with_xdp_and_ebpf_path(
+                rules_path,
+                security_config,
+                rules_manager,
+                ebpf_path,
+            ) {
                 Ok(netshield_module) => {
                     module_manager.register_module("netshield", Box::new(netshield_module))?;
                     info!("[Engine] Netshield XDP attached and registered.");
