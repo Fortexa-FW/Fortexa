@@ -11,6 +11,16 @@ This guide explains how to build, run, and test the Fortexa firewall with Netshi
 - **aya** and **bincode** crates (already in Cargo.toml)
 - **Root privileges** to attach XDP programs
 - **A compiled eBPF object file** (e.g., `netshield_xdp.o`) in your project directory
+- **(Optional)** Set a custom eBPF object path in your config.toml:
+
+```toml
+[modules.netshield]
+enabled = true
+rules_path = "/var/lib/fortexa/netshield_rules.json"
+ebpf_path = "/usr/lib/fortexa/netshield_xdp.o"  # Path to your eBPF object file
+```
+
+If not set, the default build-time path will be used.
 
 ---
 

@@ -6,6 +6,7 @@ use std::fs::File;
 use std::io::Write;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+use std::io;
 
 use crate::core::config::Config;
 use crate::core::rules::{Rule, RulesManager};
@@ -25,6 +26,7 @@ settings = { log_file = "/var/log/fortexa.log" }
 [modules.netshield]
 enabled = true
 rules_path = "/var/lib/fortexa/netshield_rules.json"
+ebpf_path = "/usr/lib/fortexa/netshield_xdp.o"
 
 [services.rest]
 enabled = true
@@ -41,7 +43,7 @@ pub struct Engine {
     rules_managers: HashMap<String, Arc<RulesManager>>,
 
     /// The module manager
-    module_manager: Arc<Mutex<ModuleManager>>,
+    pub module_manager: Arc<Mutex<ModuleManager>>,
 }
 
 impl Engine {
@@ -52,6 +54,43 @@ impl Engine {
         info!("[Engine::new] Loaded config from: {}", config_path);
         info!("[Engine::new] REST port: {}", config.services.rest.port);
         let config = Arc::new(config);
+
+        // --- Auto-copy eBPF object to /usr/lib/fortexa/netshield_xdp.o if not present ---
+        let ebpf_target = "/usr/lib/fortexa/netshield_xdp.o";
+        if let Some(netshield_cfg) = config.modules.get("netshield") {
+            let ebpf_path = netshield_cfg.ebpf_path.as_deref().unwrap_or(ebpf_target);
+            if ebpf_path == ebpf_target && !std::path::Path::new(ebpf_target).exists() {
+                // Try to find the build output eBPF object
+                let out_dir = std::env::var("OUT_DIR").ok();
+                let build_ebpf = out_dir
+                    .as_ref()
+                    .map(|d| format!("{}/netshield_xdp.o", d))
+                    .filter(|p| std::path::Path::new(p).exists())
+                    .or_else(|| {
+                        // Fallback to default relative path
+                        let fallback = "./netshield_xdp.o";
+                        if std::path::Path::new(fallback).exists() {
+                            Some(fallback.to_string())
+                        } else {
+                            None
+                        }
+                    });
+                if let Some(src) = build_ebpf {
+                    if let Some(parent) = std::path::Path::new(ebpf_target).parent() {
+                        if let Err(e) = std::fs::create_dir_all(parent) {
+                            log::error!("Failed to create directory {}: {}", parent.display(), e);
+                        }
+                    }
+                    match std::fs::copy(&src, ebpf_target) {
+                        Ok(_) => log::info!("Copied eBPF object from {} to {}", src, ebpf_target),
+                        Err(e) => log::error!("Failed to copy eBPF object from {} to {}: {}", src, ebpf_target, e),
+                    }
+                } else {
+                    log::warn!("Could not find eBPF object to copy to {}", ebpf_target);
+                }
+            }
+        }
+        // --- End auto-copy ---
 
         // Create a RulesManager for each module with a rules_path
         let mut rules_managers = HashMap::new();
@@ -121,8 +160,13 @@ impl Engine {
             .is_some_and(|m| m.enabled)
         {
             debug!("Registering Netshield module");
-            let rules_path = "/var/lib/fortexa/netshield_rules.json".to_string();
-            match NetshieldModule::with_xdp(rules_path) {
+            let netshield_cfg = self.config.modules.get("netshield").unwrap();
+            let rules_path = netshield_cfg.settings.get("rules_path")
+                .and_then(|v| v.as_str())
+                .or_else(|| if !netshield_cfg.rules_path.is_empty() { Some(netshield_cfg.rules_path.as_str()) } else { None })
+                .unwrap_or("").to_string();
+            let ebpf_path = netshield_cfg.ebpf_path.clone();
+            match NetshieldModule::with_xdp_and_ebpf_path(rules_path, ebpf_path) {
                 Ok(netshield_module) => {
                     module_manager.register_module("netshield", Box::new(netshield_module))?;
                     info!("[Engine] Netshield XDP attached and registered.");
@@ -247,6 +291,10 @@ impl Engine {
     /// Get the configuration
     pub fn get_config(&self) -> Arc<Config> {
         self.config.clone()
+    }
+
+    pub fn module_manager(&self) -> &Arc<Mutex<ModuleManager>> {
+        &self.module_manager
     }
 }
 

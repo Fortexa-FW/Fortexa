@@ -39,6 +39,16 @@ http://localhost:8080
 - All modifications automatically sync firewall rules and update `rules.json`.
 - Whitelist always takes priority over blocklist (a whitelisted IP/port is never blocked).
 - Only supply the fields you want to change for append/delete.
+- You can now set a custom eBPF object path for Netshield in your config.toml:
+
+```toml
+[modules.netshield]
+enabled = true
+rules_path = "/var/lib/fortexa/netshield_rules.json"
+ebpf_path = "/usr/lib/fortexa/netshield_xdp.o"  # Path to your eBPF object file
+```
+
+If not set, the default build-time path will be used.
 
 ---
 

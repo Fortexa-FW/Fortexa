@@ -332,7 +332,7 @@ impl RestService {
 
     /// Add a netshield rule
     async fn add_netshield_rule(
-        State(_engine): State<Arc<Engine>>,
+        State(engine): State<Arc<Engine>>,
         Json(req): Json<NetshieldRuleRequest>,
     ) -> impl IntoResponse {
         let direction = match req.direction.to_lowercase().as_str() {
@@ -378,40 +378,68 @@ impl RestService {
             parameters: req.parameters.unwrap_or_default(),
             group: req.group,
         };
-        let mut module = netshield::NetshieldModule::new();
-        match netshield::add_rule(&mut module, rule) {
-            Ok(_) => (StatusCode::CREATED, Json(json!({"success": true}))).into_response(),
-            Err(e) => (
+        let mut module_manager = engine.module_manager().lock().unwrap();
+        if let Some(module) = module_manager.get_module_mut("netshield") {
+            if let Some(netshield) = module.as_any_mut().downcast_mut::<netshield::NetshieldModule>() {
+                match netshield::add_rule(netshield, rule) {
+                    Ok(_) => (StatusCode::CREATED, Json(json!({"success": true}))).into_response(),
+                    Err(e) => (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ErrorResponse { message: e }),
+                    )
+                        .into_response(),
+                }
+            } else {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse { message: "Netshield module downcast failed".to_string() }),
+                ).into_response()
+            }
+        } else {
+            (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse { message: e }),
-            )
-                .into_response(),
+                Json(ErrorResponse { message: "Netshield module not found".to_string() }),
+            ).into_response()
         }
     }
 
     /// Delete a netshield rule
     async fn delete_netshield_rule(
-        State(_engine): State<Arc<Engine>>,
+        State(engine): State<Arc<Engine>>,
         Json(req): Json<NetshieldRuleRequest>,
     ) -> impl IntoResponse {
-        let mut module = netshield::NetshieldModule::new();
-        if let Some(id) = req.id {
-            match netshield::delete_rule(&mut module, &id) {
-                Ok(_) => (StatusCode::OK, Json(json!({"success": true}))).into_response(),
-                Err(e) => (
+        let mut module_manager = engine.module_manager().lock().unwrap();
+        if let Some(module) = module_manager.get_module_mut("netshield") {
+            if let Some(netshield) = module.as_any_mut().downcast_mut::<netshield::NetshieldModule>() {
+                if let Some(id) = req.id {
+                    match netshield::delete_rule(netshield, &id) {
+                        Ok(_) => (StatusCode::OK, Json(json!({"success": true}))).into_response(),
+                        Err(e) => (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(ErrorResponse { message: e }),
+                        )
+                            .into_response(),
+                    }
+                } else {
+                    (
+                        StatusCode::BAD_REQUEST,
+                        Json(ErrorResponse {
+                            message: "Missing rule id for deletion".to_string(),
+                        }),
+                    )
+                        .into_response()
+                }
+            } else {
+                (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ErrorResponse { message: e }),
-                )
-                    .into_response(),
+                    Json(ErrorResponse { message: "Netshield module downcast failed".to_string() }),
+                ).into_response()
             }
         } else {
             (
-                StatusCode::BAD_REQUEST,
-                Json(ErrorResponse {
-                    message: "Missing rule id for deletion".to_string(),
-                }),
-            )
-                .into_response()
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse { message: "Netshield module not found".to_string() }),
+            ).into_response()
         }
     }
 
@@ -434,7 +462,7 @@ impl RestService {
 
     /// Update a netshield rule by id
     async fn update_netshield_rule(
-        State(_engine): State<Arc<Engine>>,
+        State(engine): State<Arc<Engine>>,
         Path(id): Path<String>,
         Json(req): Json<NetshieldRuleRequest>,
     ) -> impl IntoResponse {
@@ -481,21 +509,50 @@ impl RestService {
             parameters: req.parameters.unwrap_or_default(),
             group: req.group,
         };
-        match netshield::update_rule(&id, updated) {
-            Ok(_) => (StatusCode::OK, Json(json!({"success": true}))).into_response(),
-            Err(e) => (StatusCode::NOT_FOUND, Json(ErrorResponse { message: e })).into_response(),
+        let mut module_manager = engine.module_manager().lock().unwrap();
+        if let Some(module) = module_manager.get_module_mut("netshield") {
+            if let Some(netshield) = module.as_any_mut().downcast_mut::<netshield::NetshieldModule>() {
+                match netshield::update_rule(&id, updated) {
+                    Ok(_) => (StatusCode::OK, Json(json!({"success": true}))).into_response(),
+                    Err(e) => (StatusCode::NOT_FOUND, Json(ErrorResponse { message: e })).into_response(),
+                }
+            } else {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse { message: "Netshield module downcast failed".to_string() }),
+                ).into_response()
+            }
+        } else {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse { message: "Netshield module not found".to_string() }),
+            ).into_response()
         }
     }
 
     /// Delete a netshield rule by id (path param)
     async fn delete_netshield_rule_by_id(
-        State(_engine): State<Arc<Engine>>,
+        State(engine): State<Arc<Engine>>,
         Path(id): Path<String>,
     ) -> impl IntoResponse {
-        let mut module = netshield::NetshieldModule::new();
-        match netshield::delete_rule(&mut module, &id) {
-            Ok(_) => (StatusCode::OK, Json(json!({"success": true}))).into_response(),
-            Err(e) => (StatusCode::NOT_FOUND, Json(ErrorResponse { message: e })).into_response(),
+        let mut module_manager = engine.module_manager().lock().unwrap();
+        if let Some(module) = module_manager.get_module_mut("netshield") {
+            if let Some(netshield) = module.as_any_mut().downcast_mut::<netshield::NetshieldModule>() {
+                match netshield::delete_rule(netshield, &id) {
+                    Ok(_) => (StatusCode::OK, Json(json!({"success": true}))).into_response(),
+                    Err(e) => (StatusCode::NOT_FOUND, Json(ErrorResponse { message: e })).into_response(),
+                }
+            } else {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse { message: "Netshield module downcast failed".to_string() }),
+                ).into_response()
+            }
+        } else {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse { message: "Netshield module not found".to_string() }),
+            ).into_response()
         }
     }
 

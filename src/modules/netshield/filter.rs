@@ -119,6 +119,8 @@ pub fn delete_rule(module: &mut NetshieldModule, rule_id: &str) -> Result<(), St
     rules.retain(|r| r.id != rule_id);
     if rules.len() != len_before {
         save_rules(&rules)?;
+        // Always update the eBPF map with the new ruleset
+        module.update_rules_map(&rules).map_err(|e| e.to_string())?;
         if let Some(idx) = index {
             let _ = module.remove_rule_from_map(idx as u32);
         }

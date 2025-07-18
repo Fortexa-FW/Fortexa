@@ -187,6 +187,9 @@ impl NetshieldModule {
 
     /// Update the eBPF rules map with the current rules
     pub fn update_rules_map(&self, rules: &[NetshieldRule]) -> anyhow::Result<()> {
+        log::debug!("[Netshield] update_rules_map called on instance {:p}", self);
+        let bpf_loaded = self.bpf.lock().unwrap().is_some();
+        log::debug!("[Netshield] bpf loaded: {}", bpf_loaded);
         // Security check: validate rule count
         self.security_config
             .validate_rule_count(rules.len())
@@ -233,7 +236,7 @@ impl NetshieldModule {
 
             log::info!("Updated eBPF rules map with {} rules", rules.len());
         } else {
-            log::warn!("eBPF not loaded, rules update skipped");
+            log::warn!("eBPF not loaded (bpf is None) in update_rules_map on instance {:p}", self);
         }
         Ok(())
     }
@@ -263,6 +266,84 @@ impl NetshieldModule {
             rules_map.remove(&index)?;
         }
         Ok(())
+    }
+
+    /// Advanced constructor: load eBPF and attach to all interfaces, with custom eBPF path
+    #[cfg(feature = "ebpf_enabled")]
+    pub fn with_xdp_and_ebpf_path(rules_path: String, ebpf_path: Option<String>) -> anyhow::Result<Self> {
+        let mut security_config = NetshieldSecurityConfig::default();
+        let bpf_path = if let Some(ref path) = ebpf_path {
+            // Add to allowed paths if not present
+            if !security_config.allowed_ebpf_paths.contains(path) {
+                security_config.allowed_ebpf_paths.push(path.clone());
+            }
+            path.as_str()
+        } else {
+            option_env!("NETSHIELD_EBPF_PATH").unwrap_or("./netshield_xdp.o")
+        };
+        Self::with_xdp_secure_and_path(rules_path, security_config, bpf_path)
+    }
+
+    #[cfg(feature = "ebpf_enabled")]
+    fn with_xdp_secure_and_path(
+        rules_path: String,
+        security_config: NetshieldSecurityConfig,
+        bpf_path: &str,
+    ) -> anyhow::Result<Self> {
+        // Security check: validate eBPF path
+        if !security_config.is_ebpf_path_allowed(bpf_path) {
+            return Err(anyhow::anyhow!("eBPF path not allowed: {}", bpf_path));
+        }
+        // Security check: verify file exists and is readable
+        if !std::path::Path::new(bpf_path).exists() {
+            return Err(anyhow::anyhow!("eBPF file not found: {}", bpf_path));
+        }
+        let mut bpf = Ebpf::load_file(bpf_path)
+            .map_err(|e| anyhow::anyhow!("Failed to load eBPF program: {}", e))?;
+        let mut attached_links = Vec::new();
+        let mut successful_attachments = 0;
+        for iface in get_if_addrs()? {
+            let name = iface.name.clone();
+            if !security_config.is_interface_allowed(&name) {
+                log::debug!(
+                    "Skipping interface {} (not allowed by security policy)",
+                    name
+                );
+                continue;
+            }
+            if iface.is_loopback() && security_config.skip_loopback {
+                log::debug!("Skipping loopback interface {}", name);
+                continue;
+            }
+            match Self::attach_xdp_to_interface(&mut bpf, &name) {
+                Ok(link_id) => {
+                    attached_links.push(link_id);
+                    successful_attachments += 1;
+                    log::info!("Successfully attached XDP to interface {}", name);
+                }
+                Err(e) => {
+                    log::warn!("Failed to attach XDP to interface {}: {}", name, e);
+                }
+            }
+        }
+        if successful_attachments == 0 {
+            return Err(anyhow::anyhow!(
+                "Failed to attach XDP to any network interface"
+            ));
+        }
+        log::info!("XDP attached to {} interfaces", successful_attachments);
+        Ok(Self {
+            rules_path,
+            bpf: Mutex::new(Some(bpf)),
+            attached_links: Mutex::new(attached_links),
+            security_config,
+        })
+    }
+
+    /// Fallback for with_xdp_and_ebpf_path when eBPF is not enabled
+    #[cfg(not(feature = "ebpf_enabled"))]
+    pub fn with_xdp_and_ebpf_path(rules_path: String, _ebpf_path: Option<String>) -> anyhow::Result<Self> {
+        Self::with_xdp(rules_path)
     }
 }
 

@@ -23,7 +23,7 @@ Fortexa uses eBPF/XDP for high-performance packet filtering with a modern, secur
 ### Option 1: Git Submodule (Recommended)
 ```bash
 # Add netshield-ebpf as a submodule
-git submodule add https://github.com/your-org/netshield-ebpf.git netshield-ebpf
+git submodule add https://github.com/fortexa-fw/netshield-ebpf.git netshield-ebpf
 git submodule update --init --recursive
 
 # Run the setup script
@@ -33,8 +33,8 @@ git submodule update --init --recursive
 ### Option 2: Sibling Directory
 ```bash
 # Clone repositories as siblings
-git clone https://github.com/your-org/fortexa.git
-git clone https://github.com/your-org/netshield-ebpf.git
+git clone https://github.com/fortexa-fw/fortexa.git
+git clone https://github.com/fortexa-fw/netshield-ebpf.git
 
 cd fortexa
 cargo build --features ebpf_enabled
@@ -127,14 +127,3 @@ netshield-ebpf/                      # Separate eBPF repository
 - **Zero Clippy Warnings**: Clean, idiomatic Rust code
 - **Consistent Formatting**: Standardized across all components
 - **Modern Rust**: 2024 edition features for better performance
-
-## Benefits
-
-This enhanced approach provides:
-- ✅ **Repository independence** with better integration
-- ✅ **Flexible development workflow** with robust builds  
-- ✅ **Production build automation** with intelligent fallbacks
-- ✅ **Cross-platform compatibility** without build failures
-- ✅ **Latest dependencies** with verified compatibility
-- ✅ **Optimal performance** with modern Rust features
-- ✅ **High code quality** with comprehensive linting

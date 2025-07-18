@@ -41,6 +41,10 @@ pub struct ModuleConfig {
     /// The rules storage path (optional only for module who need)
     #[serde(default)]
     pub rules_path: String,
+
+    /// Optional eBPF object path for netshield (only used for netshield)
+    #[serde(default)]
+    pub ebpf_path: Option<String>,
 }
 
 /// Service configuration
@@ -105,6 +109,7 @@ impl Config {
                             serde_json::Value::String("/var/log/fortexa/firewall.log".to_string()),
                         )]),
                         rules_path: "".to_string(),
+                        ebpf_path: None,
                     },
                 ),
                 (
@@ -118,6 +123,7 @@ impl Config {
                             ),
                         )]),
                         rules_path: "".to_string(),
+                        ebpf_path: Some("/usr/lib/fortexa/netshield_xdp.o".to_string()),
                     },
                 ),
             ]),
