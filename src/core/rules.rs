@@ -6,12 +6,36 @@ use uuid::Uuid;
 
 use crate::storage::filedb::FileDB;
 
+/// Custom deserializer to convert boolean to u8 (true -> 1, false -> 0)
+fn deserialize_bool_as_u8<'de, D>(deserializer: D) -> Result<u8, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error;
+    match serde_json::Value::deserialize(deserializer)? {
+        serde_json::Value::Bool(b) => Ok(if b { 1 } else { 0 }),
+        serde_json::Value::Number(n) => {
+            if let Some(u) = n.as_u64() {
+                if u <= 1 {
+                    Ok(u as u8)
+                } else {
+                    Err(D::Error::custom("enabled must be 0 or 1"))
+                }
+            } else {
+                Err(D::Error::custom("invalid number for enabled field"))
+            }
+        }
+        _ => Err(D::Error::custom("enabled must be a boolean or 0/1")),
+    }
+}
+
 /// Rule direction
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum Direction {
     Incoming = 0,
     Outgoing = 1,
+    Both = 2,
 }
 
 /// Rule action
@@ -58,6 +82,7 @@ pub struct Rule {
     pub action: Action,
 
     /// Whether the rule is enabled
+    #[serde(deserialize_with = "deserialize_bool_as_u8")]
     pub enabled: u8, // 0 = disabled, 1 = enabled
 
     /// Rule priority (lower numbers have higher priority)
@@ -67,18 +92,23 @@ pub struct Rule {
     pub parameters: HashMap<String, String>,
 
     /// Source IP address in network byte order, 0 for any
+    #[serde(default, deserialize_with = "null_to_zero_u32", skip_serializing)]
     pub source_ip: u32,
 
     /// Destination IP address in network byte order, 0 for any
+    #[serde(default, deserialize_with = "null_to_zero_u32", skip_serializing)]
     pub destination_ip: u32,
 
     /// Source port in network byte order, 0 for any
+    #[serde(default, deserialize_with = "null_to_zero_u16", skip_serializing)]
     pub source_port_network: u16,
 
     /// Destination port in network byte order, 0 for any
+    #[serde(default, deserialize_with = "null_to_zero_u16", skip_serializing)]
     pub destination_port_network: u16,
 
     /// IP protocol (TCP=6, UDP=17, etc.), 0 for any
+    #[serde(default, deserialize_with = "null_to_zero_u8", skip_serializing)]
     pub protocol_number: u8,
 }
 
@@ -175,4 +205,25 @@ impl RulesManager {
         let rules = storage.list_rules()?;
         Ok(rules.into_iter().filter(|r| r.enabled == 1).collect())
     }
+}
+
+fn null_to_zero_u32<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<u32>::deserialize(deserializer)?.unwrap_or(0))
+}
+
+fn null_to_zero_u16<'de, D>(deserializer: D) -> Result<u16, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<u16>::deserialize(deserializer)?.unwrap_or(0))
+}
+
+fn null_to_zero_u8<'de, D>(deserializer: D) -> Result<u8, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<u8>::deserialize(deserializer)?.unwrap_or(0))
 }

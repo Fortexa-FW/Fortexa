@@ -63,11 +63,8 @@ impl Logger {
         self.log(&format!("Applying {} rules", rules.len()))?;
 
         for rule in rules {
-            if rule.enabled == 1 {
-                self.log(&format!(
-                    "Applied rule {}: {} (action: {:?})",
-                    rule.id, rule.name, rule.action
-                ))?;
+            if rule.enabled != 0 {
+                self.log(&format!("Applied rule {}: {}", rule.id, rule.name))?;
             }
         }
 

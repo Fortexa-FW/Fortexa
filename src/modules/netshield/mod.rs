@@ -1,6 +1,6 @@
-//! netshield: eBPF/XDP-based network filtering for Fortexa
+//! netshield: eBPF/TC-based network filtering for Fortexa
 //!
-//! This module provides network filtering using eBPF/XDP in Rust.
+//! This module provides network filtering using eBPF/TC in Rust.
 //!
 //! The NetshieldModule struct initializes the netshield module.
 
@@ -8,25 +8,62 @@ use crate::core::rules::RulesManager;
 use crate::modules::Module;
 use anyhow::Result;
 use aya::maps::HashMap as BpfHashMap;
-use aya::programs::xdp::XdpLinkId;
-use aya::{Ebpf, programs::Xdp};
-use bincode::config;
+use aya::programs::tc::{TcAttachType, SchedClassifierLinkId};
+use aya::{Ebpf, programs::tc::SchedClassifier};
 use std::convert::TryInto;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::net::Ipv4Addr;
 
 #[cfg(feature = "ebpf_enabled")]
 use if_addrs::get_if_addrs;
 
 mod constants;
 pub mod security;
-use constants::{MAX_RULE_SIZE, NETSHIELD_PROGRAM_NAME, RULES_MAP_NAME};
+use constants::{NETSHIELD_PROGRAM_TC, RULES_MAP_NAME};
 use security::NetshieldSecurityConfig;
+
+// Security magic number for eBPF validation (must match C code)
+const NETSHIELD_MAGIC: u32 = 0x4E455453; // "NETS"
+
+// Rust struct that matches the eBPF C struct exactly
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+struct SecureRule {
+    magic: u32,           // Security magic number
+    source_ip: u32,       // IPv4 in network byte order (0 = any)
+    destination_ip: u32,  // IPv4 in network byte order (0 = any)
+    source_port: u16,     // Port in host byte order (0 = any)
+    destination_port: u16, // Port in host byte order (0 = any)
+    protocol: u8,         // IP protocol (6=TCP, 17=UDP, 0=any)
+    action: u8,           // 0=allow, 1=drop
+    enabled: u8,          // 1=enabled, 0=disabled
+    padding: u8,          // Padding for alignment
+}
+
+// Implement Pod trait for eBPF compatibility
+unsafe impl aya::Pod for SecureRule {}
+
+impl Default for SecureRule {
+    fn default() -> Self {
+        SecureRule {
+            magic: NETSHIELD_MAGIC,
+            source_ip: 0,
+            destination_ip: 0,
+            source_port: 0,
+            destination_port: 0,
+            protocol: 0,
+            action: 1, // Default to drop
+            enabled: 1,
+            padding: 0,
+        }
+    }
+}
 
 pub struct NetshieldModule {
     pub rules_path: String,
     pub bpf: Mutex<Option<Ebpf>>,
-    pub attached_links: Mutex<Vec<XdpLinkId>>,
+    pub attached_links: Mutex<Vec<SchedClassifierLinkId>>,
     pub security_config: NetshieldSecurityConfig,
     /// Shared rules manager for all rule CRUD operations
     pub rules_manager: Arc<RulesManager>,
@@ -50,7 +87,7 @@ impl NetshieldModule {
 
     /// Advanced constructor: load eBPF and attach to all interfaces
     #[cfg(feature = "ebpf_enabled")]
-    pub fn with_xdp(
+    pub fn with_tc(
         rules_path: String,
         security_config: NetshieldSecurityConfig,
         rules_manager: Arc<RulesManager>,
@@ -61,20 +98,20 @@ impl NetshieldModule {
             return Ok(Self::new(rules_path, security_config, rules_manager));
         }
 
-        // Try to detect if eBPF/XDP will hang by checking system capabilities first
-        if !Self::is_xdp_compatible() {
-            log::warn!("System appears to be incompatible with XDP. Falling back to basic mode.");
+        // Try to detect if eBPF/TC will work by checking system capabilities first
+        if !Self::is_tc_compatible() {
+            log::warn!("System appears to be incompatible with TC. Falling back to basic mode.");
             return Ok(Self::new(rules_path, security_config, rules_manager));
         }
 
-        log::info!("Attempting eBPF/XDP initialization (this may take a moment)...");
-        match Self::with_xdp_secure(rules_path.clone(), security_config.clone(), rules_manager.clone()) {
+        log::info!("Attempting eBPF/TC initialization (this may take a moment)...");
+        match Self::with_tc_secure(rules_path.clone(), security_config.clone(), rules_manager.clone()) {
             Ok(module) => {
-                log::info!("Successfully initialized Netshield with eBPF/XDP");
+                log::info!("Successfully initialized Netshield with eBPF/TC");
                 Ok(module)
             }
             Err(e) => {
-                log::warn!("Failed to initialize eBPF/XDP: {}. Falling back to basic mode.", e);
+                log::warn!("Failed to initialize eBPF/TC: {}. Falling back to basic mode.", e);
                 log::warn!("Firewall will start but eBPF filtering will not be active.");
 
                 // Fall back to basic constructor without eBPF
@@ -83,40 +120,40 @@ impl NetshieldModule {
         }
     }
 
-    /// Check if the system is compatible with XDP (basic heuristics)
+    /// Check if the system is compatible with TC (basic heuristics)
     #[cfg(feature = "ebpf_enabled")]
-    fn is_xdp_compatible() -> bool {
+    fn is_tc_compatible() -> bool {
         // Quick check: see if /sys/fs/bpf is mounted (indicates eBPF support)
         if !std::path::Path::new("/sys/fs/bpf").exists() {
             log::debug!("BPF filesystem not found at /sys/fs/bpf - likely no eBPF support");
             return false;
         }
 
-        // Check for basic eBPF capability by looking for bpftool or similar
+        // Check for TC support by looking for tc command
         if std::process::Command::new("which")
-            .arg("bpftool")
+            .arg("tc")
             .output()
             .map(|o| o.status.success())
             .unwrap_or(false)
         {
-            log::debug!("bpftool found - system likely supports eBPF");
+            log::debug!("tc command found - system likely supports TC eBPF");
             return true;
         }
 
         // Default to trying (most modern systems should work)
-        log::debug!("Cannot determine eBPF compatibility - will attempt to load");
+        log::debug!("Cannot determine TC compatibility - will attempt to load");
         true
     }
 
-    /// Secure XDP constructor with explicit security configuration
+    /// Secure TC constructor with explicit security configuration
     #[cfg(feature = "ebpf_enabled")]
-    pub fn with_xdp_secure(
+    pub fn with_tc_secure(
         rules_path: String,
         security_config: NetshieldSecurityConfig,
         rules_manager: Arc<RulesManager>,
     ) -> anyhow::Result<Self> {
         // Use embedded eBPF path from build script, fallback to system location
-        let bpf_path = option_env!("NETSHIELD_EBPF_PATH").unwrap_or("/usr/lib/fortexa/netshield_xdp.o");
+        let bpf_path = option_env!("NETSHIELD_EBPF_PATH").unwrap_or("/usr/lib/fortexa/netshield_tc_secure.o");
 
         // Security check: validate eBPF path
         if !security_config.is_ebpf_path_allowed(bpf_path) {
@@ -152,16 +189,16 @@ impl NetshieldModule {
                 continue;
             }
 
-            log::debug!("Attempting to attach XDP to interface: {}", name);
-            // Try to attach XDP program
-            match Self::attach_xdp_to_interface(&mut bpf, &name) {
-                Ok(link_id) => {
-                    attached_links.push(link_id);
+            log::debug!("Attempting to attach TC to interface: {}", name);
+            // Try to attach TC programs (both ingress and egress)
+            match Self::attach_tc_to_interface(&mut bpf, &name) {
+                Ok(links) => {
+                    attached_links.extend(links);
                     successful_attachments += 1;
-                    log::info!("Successfully attached XDP to interface {}", name);
+                    log::info!("Successfully attached TC to interface {}", name);
                 }
                 Err(e) => {
-                    log::warn!("Failed to attach XDP to interface {}: {}", name, e);
+                    log::warn!("Failed to attach TC to interface {}: {}", name, e);
                     // Continue with other interfaces rather than failing completely
                 }
             }
@@ -169,11 +206,11 @@ impl NetshieldModule {
 
         if successful_attachments == 0 {
             return Err(anyhow::anyhow!(
-                "Failed to attach XDP to any network interface"
+                "Failed to attach TC to any network interface"
             ));
         }
 
-        log::info!("XDP attached to {} interfaces", successful_attachments);
+        log::info!("TC attached to {} interfaces", successful_attachments);
 
         Ok(Self {
             rules_path,
@@ -184,42 +221,49 @@ impl NetshieldModule {
         })
     }
 
-    /// Helper function to attach XDP to a single interface
+    /// Helper function to attach TC to a single interface (both ingress and egress)
     #[cfg(feature = "ebpf_enabled")]
-    fn attach_xdp_to_interface(bpf: &mut Ebpf, interface_name: &str) -> anyhow::Result<XdpLinkId> {
-        log::debug!("Starting XDP attachment to interface: {}", interface_name);
-        
-        let program: &mut Xdp = bpf
-            .program_mut(NETSHIELD_PROGRAM_NAME)
-            .ok_or_else(|| anyhow::anyhow!("eBPF program '{}' not found", NETSHIELD_PROGRAM_NAME))?
-            .try_into()?;
+    fn attach_tc_to_interface(bpf: &mut Ebpf, interface_name: &str) -> anyhow::Result<Vec<SchedClassifierLinkId>> {
+        log::debug!("Starting TC attachment to interface: {}", interface_name);
 
-        log::debug!("Loading XDP program for interface: {} (this may hang on incompatible systems)", interface_name);
-        log::debug!("About to call program.load() for interface: {}", interface_name);
+        let mut links = Vec::new();
 
-        // Try loading with error details
-        match program.load() {
-            Ok(_) => {
-                log::debug!("Successfully loaded XDP program for interface: {}", interface_name);
-            }
-            Err(e) => {
-                log::error!("Failed to load XDP program for interface {}: {:?}", interface_name, e);
-                return Err(anyhow::anyhow!("Failed to load XDP program: {}", e));
-            }
+        // Add clsact qdisc if it doesn't exist (required for TC eBPF)
+        log::debug!("Adding clsact qdisc to interface: {}", interface_name);
+        if let Err(e) = std::process::Command::new("tc")
+            .args(&["qdisc", "add", "dev", interface_name, "clsact"])
+            .output() 
+        {
+            log::warn!("Failed to add clsact qdisc to {}: {}", interface_name, e);
+            // Continue anyway - qdisc might already exist
         }
 
-        log::debug!("Attaching XDP program to interface: {} (using SKB mode for compatibility)", interface_name);
-        let link_id = program
-            .attach(interface_name, aya::programs::XdpFlags::SKB_MODE)
-            .map_err(|e| anyhow::anyhow!("Failed to attach XDP to {}: {}", interface_name, e))?;
+        // Get the TC program (same program used for both ingress and egress)
+        let program: &mut SchedClassifier = bpf
+            .program_mut(NETSHIELD_PROGRAM_TC)
+            .ok_or_else(|| anyhow::anyhow!("eBPF program '{}' not found", NETSHIELD_PROGRAM_TC))?
+            .try_into()?;
 
-        log::debug!("Successfully attached XDP to interface: {}", interface_name);
-        Ok(link_id)
+        log::debug!("Loading TC program for interface: {}", interface_name);
+        program.load()?;
+
+        // Attach to ingress
+        log::debug!("Attaching TC program to ingress on interface: {}", interface_name);
+        let ingress_link = program.attach(interface_name, TcAttachType::Ingress)?;
+        links.push(ingress_link);
+
+        // Attach to egress (same program, different attach point)
+        log::debug!("Attaching TC program to egress on interface: {}", interface_name);
+        let egress_link = program.attach(interface_name, TcAttachType::Egress)?;
+        links.push(egress_link);
+
+        log::debug!("Successfully attached TC program to both ingress and egress on interface: {}", interface_name);
+        Ok(links)
     }
 
     /// Fallback constructor when eBPF is not available
     #[cfg(not(feature = "ebpf_enabled"))]
-    pub fn with_xdp(
+    pub fn with_tc(
         rules_path: String,
         security_config: NetshieldSecurityConfig,
         rules_manager: Arc<RulesManager>,
@@ -234,18 +278,14 @@ impl NetshieldModule {
         })
     }
 
-    /// Detach XDP from all interfaces (call on shutdown)
+    /// Detach TC from all interfaces (call on shutdown)
     pub fn detach_all(self) -> anyhow::Result<()> {
-        let bpf_path = option_env!("NETSHIELD_EBPF_PATH").unwrap_or("/usr/lib/fortexa/netshield_xdp.o");
+        let _bpf_path = option_env!("NETSHIELD_EBPF_PATH").unwrap_or("/usr/lib/fortexa/netshield_tc_secure.o");
 
         let attached_links = self.attached_links.into_inner().unwrap();
         for link_id in attached_links {
-            let mut bpf = Ebpf::load_file(bpf_path)?;
-            let program: &mut Xdp = bpf
-                .program_mut(NETSHIELD_PROGRAM_NAME)
-                .unwrap()
-                .try_into()?;
-            program.detach(link_id)?;
+            // TC programs will be automatically detached when links are dropped
+            log::debug!("Detaching TC link: {:?}", link_id);
         }
         Ok(())
     }
@@ -261,7 +301,7 @@ impl NetshieldModule {
             .map_err(|e| anyhow::anyhow!("Rule validation failed: {}", e))?;
 
         if let Some(bpf) = &mut *self.bpf.lock().unwrap() {
-            let mut rules_map: BpfHashMap<_, u32, [u8; MAX_RULE_SIZE]> = BpfHashMap::try_from(
+            let mut rules_map: BpfHashMap<_, u32, SecureRule> = BpfHashMap::try_from(
                 bpf.map_mut(RULES_MAP_NAME)
                     .ok_or_else(|| anyhow::anyhow!("{} not found", RULES_MAP_NAME))?,
             )?;
@@ -272,31 +312,25 @@ impl NetshieldModule {
                 rules_map.remove(&key)?;
             }
 
-            // Insert each rule (serialize to [u8; MAX_RULE_SIZE])
+            // Insert each rule (convert to SecureRule)
             for (i, rule) in rules.iter().enumerate() {
-                // Security check: validate rule before serialization
+                // Security check: validate rule before conversion
                 if let Err(e) = Self::validate_rule(rule) {
                     log::warn!("Skipping invalid rule at index {}: {}", i, e);
                     continue;
                 }
 
-                let mut data = [0u8; MAX_RULE_SIZE];
-                let config = config::standard();
-                let encoded: Vec<u8> = bincode::encode_to_vec(rule, config)
-                    .map_err(|e| anyhow::anyhow!("Failed to serialize rule: {}", e))?;
+                // Convert NetshieldRule to SecureRule
+                let secure_rule = match convert_to_secure_rule(rule) {
+                    Ok(sr) => sr,
+                    Err(e) => {
+                        log::warn!("Failed to convert rule at index {}: {}", i, e);
+                        continue;
+                    }
+                };
 
-                if encoded.len() > MAX_RULE_SIZE {
-                    log::warn!(
-                        "Rule at index {} too large ({} bytes), skipping",
-                        i,
-                        encoded.len()
-                    );
-                    continue;
-                }
-
-                let len = encoded.len().min(MAX_RULE_SIZE);
-                data[..len].copy_from_slice(&encoded[..len]);
-                rules_map.insert(i as u32, data, 0)?;
+                rules_map.insert(i as u32, secure_rule, 0)?;
+                log::debug!("Inserted rule {} into eBPF map: {:?}", i, secure_rule);
             }
 
             log::info!("Updated eBPF rules map with {} rules", rules.len());
@@ -327,7 +361,7 @@ impl NetshieldModule {
     /// Remove a rule from the eBPF rules map by index
     pub fn remove_rule_from_map(&self, index: u32) -> anyhow::Result<()> {
         if let Some(bpf) = &mut *self.bpf.lock().unwrap() {
-            let mut rules_map: BpfHashMap<_, u32, [u8; MAX_RULE_SIZE]> = BpfHashMap::try_from(
+            let mut rules_map: BpfHashMap<_, u32, SecureRule> = BpfHashMap::try_from(
                 bpf.map_mut(RULES_MAP_NAME)
                     .ok_or_else(|| anyhow::anyhow!("{} not found", RULES_MAP_NAME))?,
             )?;
@@ -338,7 +372,7 @@ impl NetshieldModule {
 
     /// Advanced constructor: load eBPF and attach to all interfaces, with custom eBPF path
     #[cfg(feature = "ebpf_enabled")]
-    pub fn with_xdp_and_ebpf_path(
+    pub fn with_tc_and_ebpf_path(
         rules_path: String,
         security_config: NetshieldSecurityConfig,
         rules_manager: Arc<RulesManager>,
@@ -357,16 +391,16 @@ impl NetshieldModule {
             }
             path.as_str()
         } else {
-            option_env!("NETSHIELD_EBPF_PATH").unwrap_or("/usr/lib/fortexa/netshield_xdp.o")
+            option_env!("NETSHIELD_EBPF_PATH").unwrap_or("/usr/lib/fortexa/netshield_tc_secure.o")
         };
 
-        match Self::with_xdp_secure_and_path(rules_path.clone(), security_config.clone(), rules_manager.clone(), bpf_path) {
+        match Self::with_tc_secure_and_path(rules_path.clone(), security_config.clone(), rules_manager.clone(), bpf_path) {
             Ok(module) => {
-                log::info!("Successfully initialized Netshield with eBPF/XDP");
+                log::info!("Successfully initialized Netshield with eBPF/TC");
                 Ok(module)
             }
             Err(e) => {
-                log::warn!("Failed to initialize eBPF/XDP: {}. Falling back to basic mode.", e);
+                log::warn!("Failed to initialize eBPF/TC: {}. Falling back to basic mode.", e);
                 log::warn!("Firewall will start but eBPF filtering will not be active.");
                 log::warn!("Ensure the eBPF program is correctly built and placed at: {}", bpf_path);
                 // Fall back to basic constructor without eBPF
@@ -376,7 +410,7 @@ impl NetshieldModule {
     }
 
     #[cfg(feature = "ebpf_enabled")]
-    fn with_xdp_secure_and_path(
+    fn with_tc_secure_and_path(
         rules_path: String,
         security_config: NetshieldSecurityConfig,
         rules_manager: Arc<RulesManager>,
@@ -408,23 +442,23 @@ impl NetshieldModule {
                 log::debug!("Skipping loopback interface {}", name);
                 continue;
             }
-            match Self::attach_xdp_to_interface(&mut bpf, &name) {
-                Ok(link_id) => {
-                    attached_links.push(link_id);
+            match Self::attach_tc_to_interface(&mut bpf, &name) {
+                Ok(links) => {
+                    attached_links.extend(links);
                     successful_attachments += 1;
-                    log::info!("Successfully attached XDP to interface {}", name);
+                    log::info!("Successfully attached TC to interface {}", name);
                 }
                 Err(e) => {
-                    log::warn!("Failed to attach XDP to interface {}: {}", name, e);
+                    log::warn!("Failed to attach TC to interface {}: {}", name, e);
                 }
             }
         }
         if successful_attachments == 0 {
             return Err(anyhow::anyhow!(
-                "Failed to attach XDP to any network interface"
+                "Failed to attach TC to any network interface"
             ));
         }
-        log::info!("XDP attached to {} interfaces", successful_attachments);
+        log::info!("TC attached to {} interfaces", successful_attachments);
         Ok(Self {
             rules_path,
             bpf: Mutex::new(Some(bpf)),
@@ -484,17 +518,10 @@ fn convert_to_netshield_rule(rule: &crate::core::rules::Rule) -> NetshieldRule {
         direction: match rule.direction {
             crate::core::rules::Direction::Incoming => Direction::Incoming,
             crate::core::rules::Direction::Outgoing => Direction::Outgoing,
+            crate::core::rules::Direction::Both => Direction::Both,
         },
-        source: if rule.source_ip != 0 {
-            Some(std::net::Ipv4Addr::from(rule.source_ip).to_string())
-        } else {
-            None
-        },
-        destination: if rule.destination_ip != 0 {
-            Some(std::net::Ipv4Addr::from(rule.destination_ip).to_string())
-        } else {
-            None
-        },
+        source: rule.source.clone(),
+        destination: rule.destination.clone(),
         source_port: if rule.source_port_network != 0 {
             Some(rule.source_port_network)
         } else {
@@ -505,15 +532,66 @@ fn convert_to_netshield_rule(rule: &crate::core::rules::Rule) -> NetshieldRule {
         } else {
             None
         },
-        protocol: None, // or convert protocol_number to string if needed
+        protocol: rule.protocol.clone(),
         action: match rule.action {
             crate::core::rules::Action::Block => Action::Block,
             crate::core::rules::Action::Allow => Action::Allow,
             crate::core::rules::Action::Log => Action::Log,
         },
-        enabled: rule.enabled == 1,
+        enabled: rule.enabled,
         priority: rule.priority,
         parameters: rule.parameters.clone(),
         group: None,
     }
+}
+
+// Helper to convert NetshieldRule to SecureRule for eBPF
+fn convert_to_secure_rule(rule: &NetshieldRule) -> Result<SecureRule, String> {
+    let mut secure_rule = SecureRule::default();
+
+    // Convert source IP
+    if let Some(source) = &rule.source {
+        let ip_addr = source.parse::<Ipv4Addr>()
+            .map_err(|e| format!("Invalid source IP '{}': {}", source, e))?;
+        secure_rule.source_ip = u32::from(ip_addr); // Store in host byte order
+        log::debug!("Converted source IP '{}' to host bytes: 0x{:08x}", source, secure_rule.source_ip);
+    }
+
+    // Convert destination IP
+    if let Some(destination) = &rule.destination {
+        let ip_addr = destination.parse::<Ipv4Addr>()
+            .map_err(|e| format!("Invalid destination IP '{}': {}", destination, e))?;
+        let ip_as_u32 = u32::from(ip_addr);
+        secure_rule.destination_ip = ip_as_u32; // Store in host byte order
+        log::debug!("Converted destination IP '{}' to host bytes: 0x{:08x}, decimal={}",
+            destination, ip_as_u32, ip_as_u32);
+    }
+
+    // Set ports (already in correct byte order)
+    secure_rule.source_port = rule.source_port.unwrap_or(0);
+    secure_rule.destination_port = rule.destination_port.unwrap_or(0);
+
+    // Convert protocol
+    secure_rule.protocol = match rule.protocol.as_deref() {
+        Some("tcp") => 6,
+        Some("udp") => 17,
+        Some("icmp") => 1,
+        _ => 0, // Any protocol
+    };
+
+    // Convert action
+    secure_rule.action = match rule.action {
+        Action::Allow => 0,
+        Action::Block => 1,
+        Action::Log => 1, // Treat log as drop for now
+    };
+
+    // Set enabled flag
+    secure_rule.enabled = rule.enabled;
+
+    log::debug!("Created SecureRule: magic=0x{:08x}, src_ip=0x{:08x}, dst_ip=0x{:08x}, protocol={}, action={}, enabled={}",
+        secure_rule.magic, secure_rule.source_ip, secure_rule.destination_ip,
+        secure_rule.protocol, secure_rule.action, secure_rule.enabled);
+
+    Ok(secure_rule)
 }

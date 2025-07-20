@@ -96,7 +96,7 @@ async fn test_rest_api_end_to_end() {
     });
     eprintln!("[test] Server task spawned");
     let client = reqwest::Client::new();
-    let base_url = format!("http://127.0.0.1:{}/api/filter/rules", port);
+    let base_url = format!("http://127.0.0.1:{}/api/netshield/rules", port);
     let mut started = false;
     for i in 0..50 {
         match client.get(base_url.as_str()).send().await {

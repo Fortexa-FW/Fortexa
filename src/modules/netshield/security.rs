@@ -25,7 +25,10 @@ impl Default for NetshieldSecurityConfig {
             max_rules: 1000,
             verify_ebpf_integrity: true,
             allowed_ebpf_paths: vec![
-                "/usr/lib/fortexa/netshield_xdp.o".to_string(),
+                "/usr/lib/fortexa/netshield_tc_secure.o".to_string(),
+                "/opt/fortexa/netshield_tc_secure.o".to_string(),
+                "./netshield_tc_secure.o".to_string(), // Only for development
+                "/usr/lib/fortexa/netshield_xdp.o".to_string(), // Legacy XDP support
                 "/opt/fortexa/netshield_xdp.o".to_string(),
                 "./netshield_xdp.o".to_string(), // Only for development
             ],
@@ -42,7 +45,9 @@ impl NetshieldSecurityConfig {
             max_rules: 100, // Lower limit for production
             verify_ebpf_integrity: true,
             allowed_ebpf_paths: vec![
-                "/usr/lib/fortexa/netshield_xdp.o".to_string(),
+                "/usr/lib/fortexa/netshield_tc_secure.o".to_string(),
+                "/opt/fortexa/netshield_tc_secure.o".to_string(),
+                "/usr/lib/fortexa/netshield_xdp.o".to_string(), // Legacy XDP support
                 "/opt/fortexa/netshield_xdp.o".to_string(),
             ],
         }

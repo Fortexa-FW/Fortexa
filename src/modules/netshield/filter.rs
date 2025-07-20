@@ -10,11 +10,35 @@ use std::io::Write;
 use std::path::Path;
 use uuid::Uuid;
 
+/// Custom deserializer to convert boolean to u8 (true -> 1, false -> 0)
+fn deserialize_bool_as_u8<'de, D>(deserializer: D) -> Result<u8, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error;
+    match serde_json::Value::deserialize(deserializer)? {
+        serde_json::Value::Bool(b) => Ok(if b { 1 } else { 0 }),
+        serde_json::Value::Number(n) => {
+            if let Some(u) = n.as_u64() {
+                if u <= 1 {
+                    Ok(u as u8)
+                } else {
+                    Err(D::Error::custom("enabled must be 0 or 1"))
+                }
+            } else {
+                Err(D::Error::custom("invalid number for enabled field"))
+            }
+        }
+        _ => Err(D::Error::custom("enabled must be a boolean or 0/1")),
+    }
+}
+
 /// Direction of network traffic for filtering.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Encode)]
 pub enum Direction {
     Incoming,
     Outgoing,
+    Both,
 }
 
 /// Action to take on matching traffic.
@@ -39,7 +63,8 @@ pub struct NetshieldRule {
     pub destination_port: Option<u16>,
     pub protocol: Option<String>,
     pub action: Action,
-    pub enabled: bool,
+    #[serde(deserialize_with = "deserialize_bool_as_u8")]
+    pub enabled: u8, // 0 = disabled, 1 = enabled
     pub priority: i32,
     pub parameters: HashMap<String, String>,
 }
@@ -58,14 +83,14 @@ impl Default for NetshieldRule {
             destination_port: None,
             protocol: None,
             action: Action::Block,
-            enabled: true,
+            enabled: 1,
             priority: 0,
             parameters: HashMap::new(),
         }
     }
 }
 
-const RULES_FILE: &str = "/var/lib/fortexa/filter_rules.json";
+const RULES_FILE: &str = "/var/lib/fortexa/netshield_rules.json";
 
 /// Load all current network filtering rules from the rules file.
 pub fn get_rules() -> Vec<NetshieldRule> {
@@ -137,7 +162,7 @@ pub fn get_rule(id: &str) -> Option<NetshieldRule> {
 }
 
 /// Update a rule by id. Replaces the rule with the same id.
-pub fn update_rule(id: &str, updated: NetshieldRule) -> Result<(), String> {
+pub fn update_rule(module: &mut NetshieldModule, id: &str, updated: NetshieldRule) -> Result<(), String> {
     debug!("[Netshield] update_rule() called: id={}", id);
     let mut rules = get_rules();
     let mut found = false;
@@ -150,7 +175,8 @@ pub fn update_rule(id: &str, updated: NetshieldRule) -> Result<(), String> {
     }
     if found {
         save_rules(&rules)?;
-        // TODO: Update eBPF/XDP
+        // Update eBPF/XDP map with the new rules
+        module.update_rules_map(&rules).map_err(|e| e.to_string())?;
         Ok(())
     } else {
         Err("Rule not found".to_string())

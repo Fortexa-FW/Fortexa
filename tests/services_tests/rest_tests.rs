@@ -47,7 +47,7 @@ async fn test_rest_api_add_list_delete_rule() {
         }
     });
     let client = reqwest::Client::new();
-    let base_url = format!("http://127.0.0.1:{}/api/filter/rules", port);
+    let base_url = format!("http://127.0.0.1:{}/api/netshield/rules", port);
     // Wait for server
     let mut started = false;
     for _ in 0..50 {
@@ -117,7 +117,7 @@ async fn test_rest_api_add_rule_invalid_data() {
         }
     });
     let client = reqwest::Client::new();
-    let base_url = format!("http://127.0.0.1:{}/api/filter/rules", port);
+    let base_url = format!("http://127.0.0.1:{}/api/netshield/rules", port);
     // Wait for server
     let mut started = false;
     for _ in 0..50 {
@@ -180,7 +180,7 @@ async fn test_rest_api_get_nonexistent_rule() {
         }
     });
     let client = reqwest::Client::new();
-    let base_url = format!("http://127.0.0.1:{}/api/filter/rules", port);
+    let base_url = format!("http://127.0.0.1:{}/api/netshield/rules", port);
     // Wait for server
     let mut started = false;
     for _ in 0..50 {
@@ -232,7 +232,7 @@ async fn test_rest_api_update_rule() {
         }
     });
     let client = reqwest::Client::new();
-    let base_url = format!("http://127.0.0.1:{}/api/filter/rules", port);
+    let base_url = format!("http://127.0.0.1:{}/api/netshield/rules", port);
     // Wait for server
     let mut started = false;
     for _ in 0..50 {
@@ -318,7 +318,7 @@ async fn test_rest_api_reset_all_rules() {
         }
     });
     let client = reqwest::Client::new();
-    let base_url = format!("http://127.0.0.1:{}/api/filter/rules", port);
+    let base_url = format!("http://127.0.0.1:{}/api/netshield/rules", port);
     // Wait for server
     let mut started = false;
     for _ in 0..50 {

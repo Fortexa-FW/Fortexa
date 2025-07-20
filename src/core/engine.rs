@@ -26,7 +26,7 @@ settings = { log_file = "/var/log/fortexa.log" }
 [modules.netshield]
 enabled = true
 rules_path = "/var/lib/fortexa/netshield_rules.json"
-ebpf_path = "/usr/lib/fortexa/netshield_xdp.o"
+ebpf_path = "/usr/lib/fortexa/netshield_tc_secure.o"
 
 [services.rest]
 enabled = true
@@ -55,8 +55,8 @@ impl Engine {
         info!("[Engine::new] REST port: {}", config.services.rest.port);
         let config = Arc::new(config);
 
-        // --- Auto-copy eBPF object to /usr/lib/fortexa/netshield_xdp.o if not present ---
-        let ebpf_target = "/usr/lib/fortexa/netshield_xdp.o";
+        // --- Auto-copy eBPF object to /usr/lib/fortexa/netshield_tc_secure.o if not present ---
+        let ebpf_target = "/usr/lib/fortexa/netshield_tc_secure.o";
         if let Some(netshield_cfg) = config.modules.get("netshield") {
             let ebpf_path = netshield_cfg.ebpf_path.as_deref().unwrap_or(ebpf_target);
             if ebpf_path == ebpf_target && !std::path::Path::new(ebpf_target).exists() {
@@ -64,11 +64,11 @@ impl Engine {
                 let out_dir = std::env::var("OUT_DIR").ok();
                 let build_ebpf = out_dir
                     .as_ref()
-                    .map(|d| format!("{}/netshield_xdp.o", d))
+                    .map(|d| format!("{}/netshield_tc_secure.o", d))
                     .filter(|p| std::path::Path::new(p).exists())
                     .or_else(|| {
                         // Fallback to default relative path
-                        let fallback = "./netshield_xdp.o";
+                        let fallback = "./netshield_tc_secure.o";
                         if std::path::Path::new(fallback).exists() {
                             Some(fallback.to_string())
                         } else {
@@ -179,19 +179,18 @@ impl Engine {
                 })
                 .unwrap_or("")
                 .to_string();
-            let ebpf_path = netshield_cfg.ebpf_path.clone();
             let security_config = NetshieldSecurityConfig::default();
             let rules_manager = self
                 .get_rules_manager("netshield")
                 .expect("No rules manager for netshield");
-            // Try to use eBPF/XDP if the feature is enabled
+            // Try to use eBPF/TC if the feature is enabled
             #[cfg(feature = "ebpf_enabled")]
-            let netshield_module = NetshieldModule::with_xdp_secure(
+            let netshield_module = NetshieldModule::with_tc_secure(
                 rules_path.clone(),
                 security_config.clone(),
                 rules_manager.clone(),
             ).unwrap_or_else(|e| {
-                warn!("Failed to initialize eBPF/XDP: {}. Using basic module.", e);
+                warn!("Failed to initialize eBPF/TC: {}. Using basic module.", e);
                 NetshieldModule::new(rules_path, security_config, rules_manager)
             });
 
@@ -239,7 +238,7 @@ impl Engine {
                     .as_any_mut()
                     .downcast_mut::<crate::modules::netshield::NetshieldModule>(
                 ) {
-                    info!("[Engine] Applying all Netshield rules to eBPF/XDP map");
+                    info!("[Engine] Applying all Netshield rules to eBPF/TC map");
                     match crate::modules::netshield::apply_all_rules(netshield) {
                         Ok(_) => info!("[Engine] Netshield rules applied successfully."),
                         Err(e) => log::error!("[Engine] Failed to apply Netshield rules: {}", e),
