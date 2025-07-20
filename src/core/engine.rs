@@ -1,5 +1,5 @@
 use anyhow::Result;
-use log::{debug, info};
+use log::{debug, info, warn};
 use std::collections::HashMap;
 use std::fs;
 use std::fs::File;
@@ -184,20 +184,26 @@ impl Engine {
             let rules_manager = self
                 .get_rules_manager("netshield")
                 .expect("No rules manager for netshield");
-            match NetshieldModule::with_xdp_and_ebpf_path(
+            // Try to use eBPF/XDP if the feature is enabled
+            #[cfg(feature = "ebpf_enabled")]
+            let netshield_module = NetshieldModule::with_xdp_secure(
+                rules_path.clone(),
+                security_config.clone(),
+                rules_manager.clone(),
+            ).unwrap_or_else(|e| {
+                warn!("Failed to initialize eBPF/XDP: {}. Using basic module.", e);
+                NetshieldModule::new(rules_path, security_config, rules_manager)
+            });
+
+            // Fallback to basic module if eBPF is not enabled
+            #[cfg(not(feature = "ebpf_enabled"))]
+            let netshield_module = NetshieldModule::new(
                 rules_path,
                 security_config,
                 rules_manager,
-                ebpf_path,
-            ) {
-                Ok(netshield_module) => {
-                    module_manager.register_module("netshield", Box::new(netshield_module))?;
-                    info!("[Engine] Netshield XDP attached and registered.");
-                }
-                Err(e) => {
-                    log::error!("[Engine] Failed to attach/register Netshield XDP: {}", e);
-                }
-            }
+            );
+            module_manager.register_module("netshield", Box::new(netshield_module))?;
+            info!("[Engine] Netshield module registered.");
         }
 
         Ok(())

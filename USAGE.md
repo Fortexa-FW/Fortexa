@@ -60,7 +60,7 @@ curl -X POST http://localhost:8080/api/netshield/rules \
   -H "Content-Type: application/json" \
   -d '{
     "name": "block-dns",
-    "direction": "Output",
+    "direction": "Outgoing",
     "destination": "8.8.8.8",
     "action": "Block"
   }'
@@ -79,7 +79,7 @@ curl -X PUT http://localhost:8080/api/netshield/rules/{RULE_ID} \
   -H "Content-Type: application/json" \
   -d '{
     "name": "block-dns-updated",
-    "direction": "Output",
+    "direction": "Outgoing",
     "destination": "8.8.4.4",
     "action": "Block"
   }'

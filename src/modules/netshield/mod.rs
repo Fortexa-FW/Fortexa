@@ -55,7 +55,57 @@ impl NetshieldModule {
         security_config: NetshieldSecurityConfig,
         rules_manager: Arc<RulesManager>,
     ) -> anyhow::Result<Self> {
-        Self::with_xdp_secure(rules_path, security_config, rules_manager)
+        // Check environment variable to force disable eBPF
+        if std::env::var("FORTEXA_DISABLE_EBPF").is_ok() {
+            log::warn!("eBPF disabled via FORTEXA_DISABLE_EBPF environment variable");
+            return Ok(Self::new(rules_path, security_config, rules_manager));
+        }
+
+        // Try to detect if eBPF/XDP will hang by checking system capabilities first
+        if !Self::is_xdp_compatible() {
+            log::warn!("System appears to be incompatible with XDP. Falling back to basic mode.");
+            return Ok(Self::new(rules_path, security_config, rules_manager));
+        }
+
+        log::info!("Attempting eBPF/XDP initialization (this may take a moment)...");
+        match Self::with_xdp_secure(rules_path.clone(), security_config.clone(), rules_manager.clone()) {
+            Ok(module) => {
+                log::info!("Successfully initialized Netshield with eBPF/XDP");
+                Ok(module)
+            }
+            Err(e) => {
+                log::warn!("Failed to initialize eBPF/XDP: {}. Falling back to basic mode.", e);
+                log::warn!("Firewall will start but eBPF filtering will not be active.");
+
+                // Fall back to basic constructor without eBPF
+                Ok(Self::new(rules_path, security_config, rules_manager))
+            }
+        }
+    }
+
+    /// Check if the system is compatible with XDP (basic heuristics)
+    #[cfg(feature = "ebpf_enabled")]
+    fn is_xdp_compatible() -> bool {
+        // Quick check: see if /sys/fs/bpf is mounted (indicates eBPF support)
+        if !std::path::Path::new("/sys/fs/bpf").exists() {
+            log::debug!("BPF filesystem not found at /sys/fs/bpf - likely no eBPF support");
+            return false;
+        }
+
+        // Check for basic eBPF capability by looking for bpftool or similar
+        if std::process::Command::new("which")
+            .arg("bpftool")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+        {
+            log::debug!("bpftool found - system likely supports eBPF");
+            return true;
+        }
+
+        // Default to trying (most modern systems should work)
+        log::debug!("Cannot determine eBPF compatibility - will attempt to load");
+        true
     }
 
     /// Secure XDP constructor with explicit security configuration
@@ -65,8 +115,8 @@ impl NetshieldModule {
         security_config: NetshieldSecurityConfig,
         rules_manager: Arc<RulesManager>,
     ) -> anyhow::Result<Self> {
-        // Use embedded eBPF path from build script, fallback to default
-        let bpf_path = option_env!("NETSHIELD_EBPF_PATH").unwrap_or("./netshield_xdp.o");
+        // Use embedded eBPF path from build script, fallback to system location
+        let bpf_path = option_env!("NETSHIELD_EBPF_PATH").unwrap_or("/usr/lib/fortexa/netshield_xdp.o");
 
         // Security check: validate eBPF path
         if !security_config.is_ebpf_path_allowed(bpf_path) {
@@ -86,6 +136,7 @@ impl NetshieldModule {
 
         for iface in get_if_addrs()? {
             let name = iface.name.clone();
+            log::debug!("Processing interface: {} (is_loopback: {})", name, iface.is_loopback());
 
             // Security check: validate interface against policy
             if !security_config.is_interface_allowed(&name) {
@@ -101,6 +152,7 @@ impl NetshieldModule {
                 continue;
             }
 
+            log::debug!("Attempting to attach XDP to interface: {}", name);
             // Try to attach XDP program
             match Self::attach_xdp_to_interface(&mut bpf, &name) {
                 Ok(link_id) => {
@@ -135,19 +187,33 @@ impl NetshieldModule {
     /// Helper function to attach XDP to a single interface
     #[cfg(feature = "ebpf_enabled")]
     fn attach_xdp_to_interface(bpf: &mut Ebpf, interface_name: &str) -> anyhow::Result<XdpLinkId> {
+        log::debug!("Starting XDP attachment to interface: {}", interface_name);
+        
         let program: &mut Xdp = bpf
             .program_mut(NETSHIELD_PROGRAM_NAME)
             .ok_or_else(|| anyhow::anyhow!("eBPF program '{}' not found", NETSHIELD_PROGRAM_NAME))?
             .try_into()?;
 
-        program
-            .load()
-            .map_err(|e| anyhow::anyhow!("Failed to load XDP program: {}", e))?;
+        log::debug!("Loading XDP program for interface: {} (this may hang on incompatible systems)", interface_name);
+        log::debug!("About to call program.load() for interface: {}", interface_name);
 
+        // Try loading with error details
+        match program.load() {
+            Ok(_) => {
+                log::debug!("Successfully loaded XDP program for interface: {}", interface_name);
+            }
+            Err(e) => {
+                log::error!("Failed to load XDP program for interface {}: {:?}", interface_name, e);
+                return Err(anyhow::anyhow!("Failed to load XDP program: {}", e));
+            }
+        }
+
+        log::debug!("Attaching XDP program to interface: {} (using SKB mode for compatibility)", interface_name);
         let link_id = program
-            .attach(interface_name, aya::programs::XdpFlags::default())
+            .attach(interface_name, aya::programs::XdpFlags::SKB_MODE)
             .map_err(|e| anyhow::anyhow!("Failed to attach XDP to {}: {}", interface_name, e))?;
 
+        log::debug!("Successfully attached XDP to interface: {}", interface_name);
         Ok(link_id)
     }
 
@@ -170,7 +236,7 @@ impl NetshieldModule {
 
     /// Detach XDP from all interfaces (call on shutdown)
     pub fn detach_all(self) -> anyhow::Result<()> {
-        let bpf_path = option_env!("NETSHIELD_EBPF_PATH").unwrap_or("./netshield_xdp.o");
+        let bpf_path = option_env!("NETSHIELD_EBPF_PATH").unwrap_or("/usr/lib/fortexa/netshield_xdp.o");
 
         let attached_links = self.attached_links.into_inner().unwrap();
         for link_id in attached_links {
@@ -278,6 +344,12 @@ impl NetshieldModule {
         rules_manager: Arc<RulesManager>,
         ebpf_path: Option<String>,
     ) -> anyhow::Result<Self> {
+        // Check environment variable to force disable eBPF
+        if std::env::var("FORTEXA_DISABLE_EBPF").is_ok() {
+            log::warn!("eBPF disabled via FORTEXA_DISABLE_EBPF environment variable");
+            return Ok(Self::new(rules_path, security_config, rules_manager));
+        }
+
         let mut security_config = security_config;
         let bpf_path = if let Some(ref path) = ebpf_path {
             if !security_config.allowed_ebpf_paths.contains(path) {
@@ -285,9 +357,22 @@ impl NetshieldModule {
             }
             path.as_str()
         } else {
-            option_env!("NETSHIELD_EBPF_PATH").unwrap_or("./netshield_xdp.o")
+            option_env!("NETSHIELD_EBPF_PATH").unwrap_or("/usr/lib/fortexa/netshield_xdp.o")
         };
-        Self::with_xdp_secure_and_path(rules_path, security_config, rules_manager, bpf_path)
+
+        match Self::with_xdp_secure_and_path(rules_path.clone(), security_config.clone(), rules_manager.clone(), bpf_path) {
+            Ok(module) => {
+                log::info!("Successfully initialized Netshield with eBPF/XDP");
+                Ok(module)
+            }
+            Err(e) => {
+                log::warn!("Failed to initialize eBPF/XDP: {}. Falling back to basic mode.", e);
+                log::warn!("Firewall will start but eBPF filtering will not be active.");
+                log::warn!("Ensure the eBPF program is correctly built and placed at: {}", bpf_path);
+                // Fall back to basic constructor without eBPF
+                Ok(Self::new(rules_path, security_config, rules_manager))
+            }
+        }
     }
 
     #[cfg(feature = "ebpf_enabled")]
@@ -311,6 +396,7 @@ impl NetshieldModule {
         let mut successful_attachments = 0;
         for iface in get_if_addrs()? {
             let name = iface.name.clone();
+            log::debug!("Processing interface: {} (is_loopback: {})", name, iface.is_loopback());
             if !security_config.is_interface_allowed(&name) {
                 log::debug!(
                     "Skipping interface {} (not allowed by security policy)",
