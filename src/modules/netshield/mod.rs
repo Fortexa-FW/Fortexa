@@ -9,18 +9,22 @@ use crate::modules::Module;
 use anyhow::Result;
 use aya::Ebpf;
 use aya::maps::HashMap as BpfHashMap;
-use aya::programs::SchedClassifier;
-use aya::programs::tc::{SchedClassifierLinkId, TcAttachType};
 use std::net::Ipv4Addr;
 use std::sync::Arc;
 use std::sync::Mutex;
 
 #[cfg(feature = "ebpf_enabled")]
+use aya::programs::SchedClassifier;
+#[cfg(feature = "ebpf_enabled")]
+use aya::programs::tc::{SchedClassifierLinkId, TcAttachType};
+#[cfg(feature = "ebpf_enabled")]
 use if_addrs::get_if_addrs;
 
 mod constants;
 pub mod security;
-use constants::{NETSHIELD_PROGRAM_TC, RULES_MAP_NAME};
+#[cfg(feature = "ebpf_enabled")]
+use constants::NETSHIELD_PROGRAM_TC;
+use constants::RULES_MAP_NAME;
 use security::NetshieldSecurityConfig;
 
 // Security magic number for eBPF validation (must match C code)
@@ -63,7 +67,10 @@ impl Default for SecureRule {
 pub struct NetshieldModule {
     pub rules_path: String,
     pub bpf: Mutex<Option<Ebpf>>,
+    #[cfg(feature = "ebpf_enabled")]
     pub attached_links: Mutex<Vec<SchedClassifierLinkId>>,
+    #[cfg(not(feature = "ebpf_enabled"))]
+    pub attached_links: Mutex<Vec<()>>, // Dummy type when eBPF is disabled
     pub security_config: NetshieldSecurityConfig,
     /// Shared rules manager for all rule CRUD operations
     pub rules_manager: Arc<RulesManager>,
@@ -310,16 +317,16 @@ impl NetshieldModule {
         let attached_links = self.attached_links.into_inner().unwrap();
         for link_id in attached_links {
             // TC programs will be automatically detached when links are dropped
-            log::debug!("Detaching TC link: {:?}", link_id);
+            log::debug!("Detaching TC link: {link_id:?}");
         }
         Ok(())
     }
 
     /// Update the eBPF rules map with the current rules
     pub fn update_rules_map(&self, rules: &[NetshieldRule]) -> anyhow::Result<()> {
-        log::debug!("[Netshield] update_rules_map called on instance {:p}", self);
+        log::debug!("[Netshield] update_rules_map called on instance {self:p}");
         let bpf_loaded = self.bpf.lock().unwrap().is_some();
-        log::debug!("[Netshield] bpf loaded: {}", bpf_loaded);
+        log::debug!("[Netshield] bpf loaded: {bpf_loaded}");
         // Security check: validate rule count
         self.security_config
             .validate_rule_count(rules.len())
@@ -341,7 +348,7 @@ impl NetshieldModule {
             for (i, rule) in rules.iter().enumerate() {
                 // Security check: validate rule before conversion
                 if let Err(e) = Self::validate_rule(rule) {
-                    log::warn!("Skipping invalid rule at index {}: {}", i, e);
+                    log::warn!("Skipping invalid rule at index {i}: {e}");
                     continue;
                 }
 
@@ -349,21 +356,18 @@ impl NetshieldModule {
                 let secure_rule = match convert_to_secure_rule(rule) {
                     Ok(sr) => sr,
                     Err(e) => {
-                        log::warn!("Failed to convert rule at index {}: {}", i, e);
+                        log::warn!("Failed to convert rule at index {i}: {e}");
                         continue;
                     }
                 };
 
                 rules_map.insert(i as u32, secure_rule, 0)?;
-                log::debug!("Inserted rule {} into eBPF map: {:?}", i, secure_rule);
+                log::debug!("Inserted rule {i} into eBPF map: {secure_rule:?}");
             }
 
             log::info!("Updated eBPF rules map with {} rules", rules.len());
         } else {
-            log::warn!(
-                "eBPF not loaded (bpf is None) in update_rules_map on instance {:p}",
-                self
-            );
+            log::warn!("eBPF not loaded (bpf is None) in update_rules_map on instance {self:p}");
         }
         Ok(())
     }
@@ -593,7 +597,7 @@ fn convert_to_secure_rule(rule: &NetshieldRule) -> Result<SecureRule, String> {
     if let Some(source) = &rule.source {
         let ip_addr = source
             .parse::<Ipv4Addr>()
-            .map_err(|e| format!("Invalid source IP '{}': {}", source, e))?;
+            .map_err(|e| format!("Invalid source IP '{source}': {e}"))?;
         secure_rule.source_ip = u32::from(ip_addr); // Store in host byte order
         log::debug!(
             "Converted source IP '{}' to host bytes: 0x{:08x}",
@@ -606,14 +610,11 @@ fn convert_to_secure_rule(rule: &NetshieldRule) -> Result<SecureRule, String> {
     if let Some(destination) = &rule.destination {
         let ip_addr = destination
             .parse::<Ipv4Addr>()
-            .map_err(|e| format!("Invalid destination IP '{}': {}", destination, e))?;
+            .map_err(|e| format!("Invalid destination IP '{destination}': {e}"))?;
         let ip_as_u32 = u32::from(ip_addr);
         secure_rule.destination_ip = ip_as_u32; // Store in host byte order
         log::debug!(
-            "Converted destination IP '{}' to host bytes: 0x{:08x}, decimal={}",
-            destination,
-            ip_as_u32,
-            ip_as_u32
+            "Converted destination IP '{destination}' to host bytes: 0x{ip_as_u32:08x}, decimal={ip_as_u32}"
         );
     }
 

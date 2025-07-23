@@ -14,10 +14,7 @@ async fn main() -> Result<()> {
     log::debug!("[DEBUG] Environment logger initialized");
 
     // Initialize the engine
-    log::debug!(
-        "[DEBUG] Initializing engine with config: {}",
-        DEFAULT_CONFIG_PATH
-    );
+    log::debug!("[DEBUG] Initializing engine with config: {DEFAULT_CONFIG_PATH}");
     let engine = Arc::new(Engine::new(DEFAULT_CONFIG_PATH)?);
     log::info!("[DEBUG] Engine initialized successfully");
 
@@ -50,10 +47,7 @@ async fn run_services(engine: Arc<Engine>) -> Result<()> {
     let rest_handle = tokio::spawn(async move {
         log::debug!("[DEBUG] REST API service task started");
         let result = rest_service.run(Box::pin(std::future::pending())).await;
-        log::debug!(
-            "[DEBUG] REST API service task completed with result: {:?}",
-            result
-        );
+        log::debug!("[DEBUG] REST API service task completed with result: {result:?}");
         result
     });
     log::info!("[DEBUG] REST API service task spawned");

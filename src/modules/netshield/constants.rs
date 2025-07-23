@@ -1,5 +1,6 @@
 //! Constants shared between eBPF and userspace components
 
+#[cfg(feature = "ebpf_enabled")]
 pub const NETSHIELD_PROGRAM_TC: &str = "netshield_ebpf_tc";
 pub const RULES_MAP_NAME: &str = "secure_rules_map";
 // NetShield eBPF module constants

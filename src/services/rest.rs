@@ -32,15 +32,15 @@ struct ErrorResponse {
 #[derive(Debug, Deserialize)]
 pub struct NetshieldRuleRequest {
     pub id: Option<String>,
-    pub name: String,
+    pub name: Option<String>,
     pub description: Option<String>,
-    pub direction: String,
+    pub direction: Option<String>,
     pub source: Option<String>,
     pub destination: Option<String>,
     pub source_port: Option<u16>,
     pub destination_port: Option<u16>,
     pub protocol: Option<String>,
-    pub action: String,
+    pub action: Option<String>,
     pub enabled: Option<bool>,
     pub priority: Option<i32>,
     pub parameters: Option<HashMap<String, String>>,
@@ -69,19 +69,19 @@ impl RestService {
         let bind_address = &config.services.rest.bind_address;
         let port = config.services.rest.port;
 
-        let addr = format!("{}:{}", bind_address, port)
+        let addr = format!("{bind_address}:{port}")
             .parse::<std::net::SocketAddr>()
             .unwrap();
 
-        info!("[RestService] Binding to address: {}", addr);
+        info!("[RestService] Binding to address: {addr}");
 
         let listener = match tokio::net::TcpListener::bind(&addr).await {
             Ok(l) => {
-                info!("[RestService] Successfully bound to {}", addr);
+                info!("[RestService] Successfully bound to {addr}");
                 l
             }
             Err(e) => {
-                error!("[RestService] Failed to bind to {}: {}", addr, e);
+                error!("[RestService] Failed to bind to {addr}: {e}");
                 return Err(e.into());
             }
         };
@@ -127,7 +127,22 @@ impl RestService {
         State(engine): State<Arc<Engine>>,
         Json(req): Json<NetshieldRuleRequest>,
     ) -> impl IntoResponse {
-        let direction = match req.direction.to_lowercase().as_str() {
+        // Validate required fields for adding a new rule
+        let name = match req.name {
+            Some(name) => name,
+            None => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(ErrorResponse {
+                        message: "Field 'name' is required".to_string(),
+                    }),
+                )
+                    .into_response();
+            }
+        };
+
+        let direction_str = req.direction.as_deref().unwrap_or("Both");
+        let direction = match direction_str.to_lowercase().as_str() {
             "incoming" => netshield::Direction::Incoming,
             "outgoing" => netshield::Direction::Outgoing,
             "both" => netshield::Direction::Both,
@@ -142,7 +157,9 @@ impl RestService {
                     .into_response();
             }
         };
-        let action = match req.action.to_lowercase().as_str() {
+
+        let action_str = req.action.as_deref().unwrap_or("Block");
+        let action = match action_str.to_lowercase().as_str() {
             "block" => netshield::Action::Block,
             "allow" => netshield::Action::Allow,
             "log" => netshield::Action::Log,
@@ -158,7 +175,7 @@ impl RestService {
         };
         let rule = netshield::NetshieldRule {
             id: req.id.unwrap_or_default(),
-            name: req.name.clone(),
+            name,
             description: req.description.clone(),
             direction,
             source: req.source.clone(),
@@ -172,24 +189,21 @@ impl RestService {
             parameters: req.parameters.clone().unwrap_or_default(),
             group: req.group.clone(),
         };
-        log::debug!("[REST] Received add_netshield_rule request: {:?}", rule);
+        log::debug!("[REST] Received add_netshield_rule request: {rule:?}");
         let mut module_manager = engine.module_manager().lock().unwrap();
         if let Some(module) = module_manager.get_module_mut("netshield") {
             if let Some(netshield) = module
                 .as_any_mut()
                 .downcast_mut::<netshield::NetshieldModule>()
             {
-                log::debug!(
-                    "[REST] Using NetshieldModule instance {:p} for add_rule",
-                    netshield
-                );
+                log::debug!("[REST] Using NetshieldModule instance {netshield:p} for add_rule");
                 match netshield::add_rule(netshield, rule.clone()) {
                     Ok(_) => {
-                        log::debug!("[REST] Successfully added rule: {:?}", rule);
+                        log::debug!("[REST] Successfully added rule: {rule:?}");
                         (StatusCode::CREATED, Json(json!({"success": true}))).into_response()
                     }
                     Err(e) => {
-                        log::error!("[REST] Failed to add rule: {:?}, error: {}", rule, e);
+                        log::error!("[REST] Failed to add rule: {rule:?}, error: {e}");
                         (
                             StatusCode::INTERNAL_SERVER_ERROR,
                             Json(ErrorResponse { message: e }),
@@ -234,18 +248,15 @@ impl RestService {
                 .as_any_mut()
                 .downcast_mut::<netshield::NetshieldModule>()
             {
-                log::debug!(
-                    "[REST] Using NetshieldModule instance {:p} for delete_rule",
-                    netshield
-                );
+                log::debug!("[REST] Using NetshieldModule instance {netshield:p} for delete_rule");
                 if let Some(id) = req.id {
                     match netshield::delete_rule(netshield, &id) {
                         Ok(_) => {
-                            log::debug!("[REST] Successfully deleted rule id={}", id);
+                            log::debug!("[REST] Successfully deleted rule id={id}");
                             (StatusCode::OK, Json(json!({"success": true}))).into_response()
                         }
                         Err(e) => {
-                            log::error!("[REST] Failed to delete rule id={}, error: {}", id, e);
+                            log::error!("[REST] Failed to delete rule id={id}, error: {e}");
                             (
                                 StatusCode::INTERNAL_SERVER_ERROR,
                                 Json(ErrorResponse { message: e }),
@@ -308,54 +319,82 @@ impl RestService {
         Path(id): Path<String>,
         Json(req): Json<NetshieldRuleRequest>,
     ) -> impl IntoResponse {
-        log::debug!(
-            "[REST] Received update_netshield_rule request: id={}, req={:?}",
-            id,
-            req
-        );
-        let direction = match req.direction.to_lowercase().as_str() {
-            "incoming" => netshield::Direction::Incoming,
-            "outgoing" => netshield::Direction::Outgoing,
-            "both" => netshield::Direction::Both,
-            _ => {
+        log::debug!("[REST] Received update_netshield_rule request: id={id}, req={req:?}");
+
+        // Get the existing rule first
+        let existing_rule = match netshield::get_rule(&id) {
+            Some(rule) => rule,
+            None => {
                 return (
-                    StatusCode::BAD_REQUEST,
+                    StatusCode::NOT_FOUND,
                     Json(ErrorResponse {
-                        message: "Invalid direction".to_string(),
+                        message: format!("Rule with id {id} not found"),
                     }),
                 )
                     .into_response();
             }
         };
-        let action = match req.action.to_lowercase().as_str() {
-            "block" => netshield::Action::Block,
-            "allow" => netshield::Action::Allow,
-            "log" => netshield::Action::Log,
-            _ => {
-                return (
-                    StatusCode::BAD_REQUEST,
-                    Json(ErrorResponse {
-                        message: "Invalid action".to_string(),
-                    }),
-                )
-                    .into_response();
+
+        // Parse direction if provided, otherwise use existing
+        let direction = if let Some(dir_str) = &req.direction {
+            match dir_str.to_lowercase().as_str() {
+                "incoming" => netshield::Direction::Incoming,
+                "outgoing" => netshield::Direction::Outgoing,
+                "both" => netshield::Direction::Both,
+                _ => {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(ErrorResponse {
+                            message: "Invalid direction".to_string(),
+                        }),
+                    )
+                        .into_response();
+                }
             }
+        } else {
+            existing_rule.direction
         };
+
+        // Parse action if provided, otherwise use existing
+        let action = if let Some(action_str) = &req.action {
+            match action_str.to_lowercase().as_str() {
+                "block" => netshield::Action::Block,
+                "allow" => netshield::Action::Allow,
+                "log" => netshield::Action::Log,
+                _ => {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(ErrorResponse {
+                            message: "Invalid action".to_string(),
+                        }),
+                    )
+                        .into_response();
+                }
+            }
+        } else {
+            existing_rule.action
+        };
+
+        // Create updated rule with only changed fields
         let updated = netshield::NetshieldRule {
             id: id.clone(),
-            name: req.name.clone(),
-            description: req.description.clone(),
+            name: req.name.unwrap_or(existing_rule.name),
+            description: req.description.or(existing_rule.description),
             direction,
-            source: req.source.clone(),
-            destination: req.destination.clone(),
-            source_port: req.source_port,
-            destination_port: req.destination_port,
-            protocol: req.protocol.clone(),
+            source: req.source.or(existing_rule.source),
+            destination: req.destination.or(existing_rule.destination),
+            source_port: req.source_port.or(existing_rule.source_port),
+            destination_port: req.destination_port.or(existing_rule.destination_port),
+            protocol: req.protocol.or(existing_rule.protocol),
             action,
-            enabled: if req.enabled.unwrap_or(true) { 1 } else { 0 },
-            priority: req.priority.unwrap_or(0),
-            parameters: req.parameters.clone().unwrap_or_default(),
-            group: req.group.clone(),
+            enabled: if req.enabled.unwrap_or(existing_rule.enabled == 1) {
+                1
+            } else {
+                0
+            },
+            priority: req.priority.unwrap_or(existing_rule.priority),
+            parameters: req.parameters.unwrap_or(existing_rule.parameters),
+            group: req.group.or(existing_rule.group),
         };
         let mut module_manager = engine.module_manager().lock().unwrap();
         if let Some(module) = module_manager.get_module_mut("netshield") {
@@ -363,17 +402,14 @@ impl RestService {
                 .as_any_mut()
                 .downcast_mut::<netshield::NetshieldModule>()
             {
-                log::debug!(
-                    "[REST] Using NetshieldModule instance {:p} for update_rule",
-                    netshield
-                );
+                log::debug!("[REST] Using NetshieldModule instance {netshield:p} for update_rule");
                 match netshield::update_rule(netshield, &id, updated.clone()) {
                     Ok(_) => {
-                        log::debug!("[REST] Successfully updated rule: {:?}", updated);
+                        log::debug!("[REST] Successfully updated rule: {updated:?}");
                         (StatusCode::OK, Json(json!({"success": true}))).into_response()
                     }
                     Err(e) => {
-                        log::error!("[REST] Failed to update rule id={}, error: {}", id, e);
+                        log::error!("[REST] Failed to update rule id={id}, error: {e}");
                         (StatusCode::NOT_FOUND, Json(ErrorResponse { message: e })).into_response()
                     }
                 }
@@ -404,10 +440,7 @@ impl RestService {
         State(engine): State<Arc<Engine>>,
         Path(id): Path<String>,
     ) -> impl IntoResponse {
-        log::debug!(
-            "[REST] Received delete_netshield_rule_by_id request: id={}",
-            id
-        );
+        log::debug!("[REST] Received delete_netshield_rule_by_id request: id={id}");
         let mut module_manager = engine.module_manager().lock().unwrap();
         if let Some(module) = module_manager.get_module_mut("netshield") {
             if let Some(netshield) = module
@@ -415,16 +448,15 @@ impl RestService {
                 .downcast_mut::<netshield::NetshieldModule>()
             {
                 log::debug!(
-                    "[REST] Using NetshieldModule instance {:p} for delete_rule_by_id",
-                    netshield
+                    "[REST] Using NetshieldModule instance {netshield:p} for delete_rule_by_id"
                 );
                 match netshield::delete_rule(netshield, &id) {
                     Ok(_) => {
-                        log::debug!("[REST] Successfully deleted rule id={}", id);
+                        log::debug!("[REST] Successfully deleted rule id={id}");
                         (StatusCode::OK, Json(json!({"success": true}))).into_response()
                     }
                     Err(e) => {
-                        log::error!("[REST] Failed to delete rule id={}, error: {}", id, e);
+                        log::error!("[REST] Failed to delete rule id={id}, error: {e}");
                         (StatusCode::NOT_FOUND, Json(ErrorResponse { message: e })).into_response()
                     }
                 }

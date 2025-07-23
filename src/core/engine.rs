@@ -1,5 +1,7 @@
 use anyhow::Result;
-use log::{debug, info, warn};
+#[cfg(feature = "ebpf_enabled")]
+use log::warn;
+use log::{debug, info};
 use std::collections::HashMap;
 use std::fs;
 use std::fs::File;
@@ -51,7 +53,7 @@ impl Engine {
     pub fn new(config_path: &str) -> Result<Self> {
         Self::ensure_config_exists(config_path)?;
         let config = Config::from_file(config_path)?;
-        info!("[Engine::new] Loaded config from: {}", config_path);
+        info!("[Engine::new] Loaded config from: {config_path}");
         info!("[Engine::new] REST port: {}", config.services.rest.port);
         let config = Arc::new(config);
 
@@ -64,7 +66,7 @@ impl Engine {
                 let out_dir = std::env::var("OUT_DIR").ok();
                 let build_ebpf = out_dir
                     .as_ref()
-                    .map(|d| format!("{}/netshield_tc_secure.o", d))
+                    .map(|d| format!("{d}/netshield_tc_secure.o"))
                     .filter(|p| std::path::Path::new(p).exists())
                     .or_else(|| {
                         // Fallback to default relative path
@@ -82,16 +84,13 @@ impl Engine {
                         }
                     }
                     match std::fs::copy(&src, ebpf_target) {
-                        Ok(_) => log::info!("Copied eBPF object from {} to {}", src, ebpf_target),
+                        Ok(_) => log::info!("Copied eBPF object from {src} to {ebpf_target}"),
                         Err(e) => log::error!(
-                            "Failed to copy eBPF object from {} to {}: {}",
-                            src,
-                            ebpf_target,
-                            e
+                            "Failed to copy eBPF object from {src} to {ebpf_target}: {e}"
                         ),
                     }
                 } else {
-                    log::warn!("Could not find eBPF object to copy to {}", ebpf_target);
+                    log::warn!("Could not find eBPF object to copy to {ebpf_target}");
                 }
             }
         }
@@ -219,7 +218,7 @@ impl Engine {
             }
             let module_manager = self.module_manager.lock().unwrap();
             if let Some(module) = module_manager.get_module(module_name) {
-                debug!("Applying rules to module: {}", module_name);
+                debug!("Applying rules to module: {module_name}");
                 let manager = self.rules_managers.get(module_name).cloned();
                 if let Some(manager) = manager {
                     module.apply_rules(&manager.get_enabled_rules()?)?;
@@ -238,7 +237,7 @@ impl Engine {
                     info!("[Engine] Applying all Netshield rules to eBPF/TC map");
                     match crate::modules::netshield::apply_all_rules(netshield) {
                         Ok(_) => info!("[Engine] Netshield rules applied successfully."),
-                        Err(e) => log::error!("[Engine] Failed to apply Netshield rules: {}", e),
+                        Err(e) => log::error!("[Engine] Failed to apply Netshield rules: {e}"),
                     }
                 } else {
                     log::error!("[Engine] Failed to downcast to NetshieldModule");

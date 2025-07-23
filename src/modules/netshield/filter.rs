@@ -137,7 +137,7 @@ pub fn add_rule(module: &mut NetshieldModule, mut rule: NetshieldRule) -> Result
 /// Delete a network filtering rule by id.
 /// This removes the rule from both the persistent file and the eBPF/XDP map.
 pub fn delete_rule(module: &mut NetshieldModule, rule_id: &str) -> Result<(), String> {
-    debug!("[Netshield] delete_rule() called: id={}", rule_id);
+    debug!("[Netshield] delete_rule() called: id={rule_id}");
     let mut rules = get_rules();
     let len_before = rules.len();
     let index = rules.iter().position(|r| r.id == rule_id);
@@ -157,7 +157,7 @@ pub fn delete_rule(module: &mut NetshieldModule, rule_id: &str) -> Result<(), St
 
 /// Get a rule by id.
 pub fn get_rule(id: &str) -> Option<NetshieldRule> {
-    debug!("[Netshield] get_rule() called: id={}", id);
+    debug!("[Netshield] get_rule() called: id={id}");
     get_rules().into_iter().find(|r| r.id == id)
 }
 
@@ -167,7 +167,7 @@ pub fn update_rule(
     id: &str,
     updated: NetshieldRule,
 ) -> Result<(), String> {
-    debug!("[Netshield] update_rule() called: id={}", id);
+    debug!("[Netshield] update_rule() called: id={id}");
     let mut rules = get_rules();
     let mut found = false;
     for rule in &mut rules {
@@ -198,7 +198,7 @@ pub fn get_groups() -> Vec<String> {
 
 /// Get all rules in a specific group.
 pub fn get_rules_by_group(group: &str) -> Vec<NetshieldRule> {
-    debug!("[Netshield] get_rules_by_group() called: group={}", group);
+    debug!("[Netshield] get_rules_by_group() called: group={group}");
     get_rules()
         .into_iter()
         .filter(|r| r.group.as_deref() == Some(group))
@@ -214,7 +214,7 @@ pub fn apply_rule_to_system(
         "[Netshield] Applying single rule to eBPF/XDP map: id={}, name={}",
         rule.id, rule.name
     );
-    debug!("[Netshield] Rule details: {:?}", rule);
+    debug!("[Netshield] Rule details: {rule:?}");
     module
         .update_rules_map(&[rule.clone()])
         .map_err(|e| e.to_string())?;

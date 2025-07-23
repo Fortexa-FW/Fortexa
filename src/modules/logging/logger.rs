@@ -33,7 +33,7 @@ impl Logger {
             .create(true)
             .append(true)
             .open(log_file)
-            .context(format!("Failed to open log file: {}", log_file))?;
+            .context(format!("Failed to open log file: {log_file}"))?;
 
         Ok(Self {
             log_file: log_file.to_string(),
@@ -53,7 +53,7 @@ impl Logger {
     pub fn log(&self, message: &str) -> Result<()> {
         let mut file = self.file.lock().unwrap();
         let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S");
-        writeln!(file, "[{}] {}", timestamp, message).context("Failed to write to log file")?;
+        writeln!(file, "[{timestamp}] {message}").context("Failed to write to log file")?;
 
         Ok(())
     }
