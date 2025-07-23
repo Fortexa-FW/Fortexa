@@ -51,7 +51,7 @@ sudo ./target/release/fortexa
 
 ```bash
 # Add a rule to block traffic to 8.8.8.8
-curl -X POST http://127.0.0.1:8080/api/filter/rules \
+curl -X POST http://127.0.0.1:8080/api/netshield/rules \
   -H "Content-Type: application/json" \
   -d '{
     "name": "block-dns",
@@ -182,7 +182,7 @@ cargo test --features ebpf_enabled
 
 ## 📄 **License**
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the GPLv3 License - see the [LICENSE](LICENSE) file for details.
 
 ## 🙏 **Acknowledgments**
 

@@ -2,7 +2,6 @@
 
 pub const NETSHIELD_PROGRAM_TC: &str = "netshield_ebpf_tc";
 pub const RULES_MAP_NAME: &str = "secure_rules_map";
-pub const MAX_RULE_SIZE: usize = 256;
 // NetShield eBPF module constants
 
 // Note: Action constants and other eBPF-specific constants are defined

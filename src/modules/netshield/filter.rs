@@ -162,7 +162,11 @@ pub fn get_rule(id: &str) -> Option<NetshieldRule> {
 }
 
 /// Update a rule by id. Replaces the rule with the same id.
-pub fn update_rule(module: &mut NetshieldModule, id: &str, updated: NetshieldRule) -> Result<(), String> {
+pub fn update_rule(
+    module: &mut NetshieldModule,
+    id: &str,
+    updated: NetshieldRule,
+) -> Result<(), String> {
     debug!("[Netshield] update_rule() called: id={}", id);
     let mut rules = get_rules();
     let mut found = false;

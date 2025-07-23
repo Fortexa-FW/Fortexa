@@ -53,7 +53,7 @@ sudo ./target/release/fortexa
 Create a rule to block traffic to a specific destination:
 
 ```bash
-curl -X POST http://127.0.0.1:8080/api/filter/rules \
+curl -X POST http://127.0.0.1:8080/api/netshield/rules \
   -H "Content-Type: application/json" \
   -d '{
     "name": "block-dns",

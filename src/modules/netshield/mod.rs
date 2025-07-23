@@ -7,13 +7,13 @@
 use crate::core::rules::RulesManager;
 use crate::modules::Module;
 use anyhow::Result;
+use aya::Ebpf;
 use aya::maps::HashMap as BpfHashMap;
-use aya::programs::tc::{TcAttachType, SchedClassifierLinkId};
-use aya::{Ebpf, programs::tc::SchedClassifier};
-use std::convert::TryInto;
+use aya::programs::SchedClassifier;
+use aya::programs::tc::{SchedClassifierLinkId, TcAttachType};
+use std::net::Ipv4Addr;
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::net::Ipv4Addr;
 
 #[cfg(feature = "ebpf_enabled")]
 use if_addrs::get_if_addrs;
@@ -30,15 +30,15 @@ const NETSHIELD_MAGIC: u32 = 0x4E455453; // "NETS"
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 struct SecureRule {
-    magic: u32,           // Security magic number
-    source_ip: u32,       // IPv4 in network byte order (0 = any)
-    destination_ip: u32,  // IPv4 in network byte order (0 = any)
-    source_port: u16,     // Port in host byte order (0 = any)
+    magic: u32,            // Security magic number
+    source_ip: u32,        // IPv4 in network byte order (0 = any)
+    destination_ip: u32,   // IPv4 in network byte order (0 = any)
+    source_port: u16,      // Port in host byte order (0 = any)
     destination_port: u16, // Port in host byte order (0 = any)
-    protocol: u8,         // IP protocol (6=TCP, 17=UDP, 0=any)
-    action: u8,           // 0=allow, 1=drop
-    enabled: u8,          // 1=enabled, 0=disabled
-    padding: u8,          // Padding for alignment
+    protocol: u8,          // IP protocol (6=TCP, 17=UDP, 0=any)
+    action: u8,            // 0=allow, 1=drop
+    enabled: u8,           // 1=enabled, 0=disabled
+    padding: u8,           // Padding for alignment
 }
 
 // Implement Pod trait for eBPF compatibility
@@ -105,13 +105,20 @@ impl NetshieldModule {
         }
 
         log::info!("Attempting eBPF/TC initialization (this may take a moment)...");
-        match Self::with_tc_secure(rules_path.clone(), security_config.clone(), rules_manager.clone()) {
+        match Self::with_tc_secure(
+            rules_path.clone(),
+            security_config.clone(),
+            rules_manager.clone(),
+        ) {
             Ok(module) => {
                 log::info!("Successfully initialized Netshield with eBPF/TC");
                 Ok(module)
             }
             Err(e) => {
-                log::warn!("Failed to initialize eBPF/TC: {}. Falling back to basic mode.", e);
+                log::warn!(
+                    "Failed to initialize eBPF/TC: {}. Falling back to basic mode.",
+                    e
+                );
                 log::warn!("Firewall will start but eBPF filtering will not be active.");
 
                 // Fall back to basic constructor without eBPF
@@ -153,7 +160,8 @@ impl NetshieldModule {
         rules_manager: Arc<RulesManager>,
     ) -> anyhow::Result<Self> {
         // Use embedded eBPF path from build script, fallback to system location
-        let bpf_path = option_env!("NETSHIELD_EBPF_PATH").unwrap_or("/usr/lib/fortexa/netshield_tc_secure.o");
+        let bpf_path =
+            option_env!("NETSHIELD_EBPF_PATH").unwrap_or("/usr/lib/fortexa/netshield_tc_secure.o");
 
         // Security check: validate eBPF path
         if !security_config.is_ebpf_path_allowed(bpf_path) {
@@ -173,7 +181,11 @@ impl NetshieldModule {
 
         for iface in get_if_addrs()? {
             let name = iface.name.clone();
-            log::debug!("Processing interface: {} (is_loopback: {})", name, iface.is_loopback());
+            log::debug!(
+                "Processing interface: {} (is_loopback: {})",
+                name,
+                iface.is_loopback()
+            );
 
             // Security check: validate interface against policy
             if !security_config.is_interface_allowed(&name) {
@@ -223,7 +235,10 @@ impl NetshieldModule {
 
     /// Helper function to attach TC to a single interface (both ingress and egress)
     #[cfg(feature = "ebpf_enabled")]
-    fn attach_tc_to_interface(bpf: &mut Ebpf, interface_name: &str) -> anyhow::Result<Vec<SchedClassifierLinkId>> {
+    fn attach_tc_to_interface(
+        bpf: &mut Ebpf,
+        interface_name: &str,
+    ) -> anyhow::Result<Vec<SchedClassifierLinkId>> {
         log::debug!("Starting TC attachment to interface: {}", interface_name);
 
         let mut links = Vec::new();
@@ -232,7 +247,7 @@ impl NetshieldModule {
         log::debug!("Adding clsact qdisc to interface: {}", interface_name);
         if let Err(e) = std::process::Command::new("tc")
             .args(&["qdisc", "add", "dev", interface_name, "clsact"])
-            .output() 
+            .output()
         {
             log::warn!("Failed to add clsact qdisc to {}: {}", interface_name, e);
             // Continue anyway - qdisc might already exist
@@ -248,16 +263,25 @@ impl NetshieldModule {
         program.load()?;
 
         // Attach to ingress
-        log::debug!("Attaching TC program to ingress on interface: {}", interface_name);
+        log::debug!(
+            "Attaching TC program to ingress on interface: {}",
+            interface_name
+        );
         let ingress_link = program.attach(interface_name, TcAttachType::Ingress)?;
         links.push(ingress_link);
 
         // Attach to egress (same program, different attach point)
-        log::debug!("Attaching TC program to egress on interface: {}", interface_name);
+        log::debug!(
+            "Attaching TC program to egress on interface: {}",
+            interface_name
+        );
         let egress_link = program.attach(interface_name, TcAttachType::Egress)?;
         links.push(egress_link);
 
-        log::debug!("Successfully attached TC program to both ingress and egress on interface: {}", interface_name);
+        log::debug!(
+            "Successfully attached TC program to both ingress and egress on interface: {}",
+            interface_name
+        );
         Ok(links)
     }
 
@@ -280,7 +304,8 @@ impl NetshieldModule {
 
     /// Detach TC from all interfaces (call on shutdown)
     pub fn detach_all(self) -> anyhow::Result<()> {
-        let _bpf_path = option_env!("NETSHIELD_EBPF_PATH").unwrap_or("/usr/lib/fortexa/netshield_tc_secure.o");
+        let _bpf_path =
+            option_env!("NETSHIELD_EBPF_PATH").unwrap_or("/usr/lib/fortexa/netshield_tc_secure.o");
 
         let attached_links = self.attached_links.into_inner().unwrap();
         for link_id in attached_links {
@@ -394,15 +419,26 @@ impl NetshieldModule {
             option_env!("NETSHIELD_EBPF_PATH").unwrap_or("/usr/lib/fortexa/netshield_tc_secure.o")
         };
 
-        match Self::with_tc_secure_and_path(rules_path.clone(), security_config.clone(), rules_manager.clone(), bpf_path) {
+        match Self::with_tc_secure_and_path(
+            rules_path.clone(),
+            security_config.clone(),
+            rules_manager.clone(),
+            bpf_path,
+        ) {
             Ok(module) => {
                 log::info!("Successfully initialized Netshield with eBPF/TC");
                 Ok(module)
             }
             Err(e) => {
-                log::warn!("Failed to initialize eBPF/TC: {}. Falling back to basic mode.", e);
+                log::warn!(
+                    "Failed to initialize eBPF/TC: {}. Falling back to basic mode.",
+                    e
+                );
                 log::warn!("Firewall will start but eBPF filtering will not be active.");
-                log::warn!("Ensure the eBPF program is correctly built and placed at: {}", bpf_path);
+                log::warn!(
+                    "Ensure the eBPF program is correctly built and placed at: {}",
+                    bpf_path
+                );
                 // Fall back to basic constructor without eBPF
                 Ok(Self::new(rules_path, security_config, rules_manager))
             }
@@ -430,7 +466,11 @@ impl NetshieldModule {
         let mut successful_attachments = 0;
         for iface in get_if_addrs()? {
             let name = iface.name.clone();
-            log::debug!("Processing interface: {} (is_loopback: {})", name, iface.is_loopback());
+            log::debug!(
+                "Processing interface: {} (is_loopback: {})",
+                name,
+                iface.is_loopback()
+            );
             if !security_config.is_interface_allowed(&name) {
                 log::debug!(
                     "Skipping interface {} (not allowed by security policy)",
@@ -551,20 +591,30 @@ fn convert_to_secure_rule(rule: &NetshieldRule) -> Result<SecureRule, String> {
 
     // Convert source IP
     if let Some(source) = &rule.source {
-        let ip_addr = source.parse::<Ipv4Addr>()
+        let ip_addr = source
+            .parse::<Ipv4Addr>()
             .map_err(|e| format!("Invalid source IP '{}': {}", source, e))?;
         secure_rule.source_ip = u32::from(ip_addr); // Store in host byte order
-        log::debug!("Converted source IP '{}' to host bytes: 0x{:08x}", source, secure_rule.source_ip);
+        log::debug!(
+            "Converted source IP '{}' to host bytes: 0x{:08x}",
+            source,
+            secure_rule.source_ip
+        );
     }
 
     // Convert destination IP
     if let Some(destination) = &rule.destination {
-        let ip_addr = destination.parse::<Ipv4Addr>()
+        let ip_addr = destination
+            .parse::<Ipv4Addr>()
             .map_err(|e| format!("Invalid destination IP '{}': {}", destination, e))?;
         let ip_as_u32 = u32::from(ip_addr);
         secure_rule.destination_ip = ip_as_u32; // Store in host byte order
-        log::debug!("Converted destination IP '{}' to host bytes: 0x{:08x}, decimal={}",
-            destination, ip_as_u32, ip_as_u32);
+        log::debug!(
+            "Converted destination IP '{}' to host bytes: 0x{:08x}, decimal={}",
+            destination,
+            ip_as_u32,
+            ip_as_u32
+        );
     }
 
     // Set ports (already in correct byte order)
@@ -589,9 +639,15 @@ fn convert_to_secure_rule(rule: &NetshieldRule) -> Result<SecureRule, String> {
     // Set enabled flag
     secure_rule.enabled = rule.enabled;
 
-    log::debug!("Created SecureRule: magic=0x{:08x}, src_ip=0x{:08x}, dst_ip=0x{:08x}, protocol={}, action={}, enabled={}",
-        secure_rule.magic, secure_rule.source_ip, secure_rule.destination_ip,
-        secure_rule.protocol, secure_rule.action, secure_rule.enabled);
+    log::debug!(
+        "Created SecureRule: magic=0x{:08x}, src_ip=0x{:08x}, dst_ip=0x{:08x}, protocol={}, action={}, enabled={}",
+        secure_rule.magic,
+        secure_rule.source_ip,
+        secure_rule.destination_ip,
+        secure_rule.protocol,
+        secure_rule.action,
+        secure_rule.enabled
+    );
 
     Ok(secure_rule)
 }

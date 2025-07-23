@@ -189,18 +189,15 @@ impl Engine {
                 rules_path.clone(),
                 security_config.clone(),
                 rules_manager.clone(),
-            ).unwrap_or_else(|e| {
+            )
+            .unwrap_or_else(|e| {
                 warn!("Failed to initialize eBPF/TC: {}. Using basic module.", e);
                 NetshieldModule::new(rules_path, security_config, rules_manager)
             });
 
             // Fallback to basic module if eBPF is not enabled
             #[cfg(not(feature = "ebpf_enabled"))]
-            let netshield_module = NetshieldModule::new(
-                rules_path,
-                security_config,
-                rules_manager,
-            );
+            let netshield_module = NetshieldModule::new(rules_path, security_config, rules_manager);
             module_manager.register_module("netshield", Box::new(netshield_module))?;
             info!("[Engine] Netshield module registered.");
         }

@@ -14,7 +14,6 @@ use std::sync::Arc;
 use tower_http::trace::TraceLayer;
 
 use crate::core::engine::Engine;
-use crate::core::rules::{Action, Direction, Rule};
 use crate::modules::netshield;
 
 /// REST service
@@ -106,6 +105,7 @@ impl RestService {
                 "/api/netshield/groups/{group}/rules",
                 get(Self::list_netshield_rules_by_group),
             )
+            .route("/api/netshield/stats", get(Self::get_netshield_stats))
             .layer(TraceLayer::new_for_http())
             .with_state(self.engine.clone());
         axum::serve(listener, app)
@@ -135,7 +135,8 @@ impl RestService {
                 return (
                     StatusCode::BAD_REQUEST,
                     Json(ErrorResponse {
-                        message: "Invalid direction. Use 'incoming', 'outgoing', or 'both'.".to_string(),
+                        message: "Invalid direction. Use 'incoming', 'outgoing', or 'both'."
+                            .to_string(),
                     }),
                 )
                     .into_response();
@@ -464,5 +465,22 @@ impl RestService {
     ) -> impl IntoResponse {
         let rules = netshield::get_rules_by_group(&group);
         (StatusCode::OK, Json(rules))
+    }
+
+    /// Get netshield statistics
+    async fn get_netshield_stats(State(_engine): State<Arc<Engine>>) -> impl IntoResponse {
+        // Get basic statistics from netshield module
+        let rules = netshield::get_rules();
+        let groups = netshield::get_groups();
+
+        let stats = json!({
+            "rules_count": rules.len(),
+            "groups_count": groups.len(),
+            "enabled_rules": rules.iter().filter(|r| r.enabled == 1).count(),
+            "disabled_rules": rules.iter().filter(|r| r.enabled == 0).count(),
+            "status": "active"
+        });
+
+        (StatusCode::OK, Json(stats))
     }
 }
