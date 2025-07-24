@@ -1,38 +1,32 @@
-use crate::common::TEST_CONFIG_TOML;
+use crate::common::{TEST_CONFIG_TOML, cleanup_test_ebpf};
 use fortexa::core::engine::Engine;
 use fortexa::services::rest::RestService;
 use portpicker;
 use serde_json::json;
 use std::fs;
+use std::sync::Arc;
 
-fn setup_test_paths() -> (String, String, String, String, u16) {
+fn setup_test_paths() -> (String, String, String, u16) {
     let test_dir = "/tmp/fortexa_test";
     fs::create_dir_all(test_dir).unwrap();
     let port = portpicker::pick_unused_port().expect("No ports free");
-    let chains_path = format!("{}/chains_{}.json", test_dir, port);
     let rules_path = format!("{}/rules_{}.json", test_dir, port);
     let config_path = format!("{}/config_{}.toml", test_dir, port);
-    let chain_prefix = format!(
-        "FORTEXA_TST_{}",
-        &uuid::Uuid::new_v4().simple().to_string()[..8]
-    );
-    fs::write(&chains_path, b"[]").unwrap();
+    let test_id = format!("test_{}", port);
     fs::write(&rules_path, b"[]").unwrap();
-    (chains_path, rules_path, config_path, chain_prefix, port)
+    (rules_path, config_path, test_id, port)
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_rest_api_add_list_delete_rule() {
     eprintln!("[debug] test_rest_api_add_list_delete_rule running");
-    let (chains_path, rules_path, config_path, chain_prefix, port) = setup_test_paths();
+    let (rules_path, config_path, test_id, port) = setup_test_paths();
     let config_toml = TEST_CONFIG_TOML
         .replace("{rules_path}", &rules_path)
-        .replace("{chains_path}", &chains_path)
-        .replace("{chain_prefix}", &chain_prefix)
         .replace("{port}", &port.to_string());
     fs::write(&config_path, config_toml).unwrap();
     eprintln!("[debug] Config path: {}", config_path);
-    let engine = Engine::new(&config_path).unwrap();
+    let engine = Arc::new(Engine::new(&config_path).unwrap());
     engine.register_all_modules().unwrap();
     let rest_service = RestService::new(engine.clone());
     let (shutdown_tx, shutdown_rx_server) = tokio::sync::oneshot::channel::<()>();
@@ -61,12 +55,17 @@ async fn test_rest_api_add_list_delete_rule() {
     // Add a rule
     let rule_req = json!({
         "name": "api_test_rule",
-        "direction": "input",
-        "action": "accept",
+        "direction": "incoming",
+        "action": "allow",
         "priority": 1
     });
     let resp = client.post(&base_url).json(&rule_req).send().await.unwrap();
-    assert!(resp.status().is_success());
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_else(|_| "Failed to read body".to_string());
+        eprintln!("[debug] POST failed with status: {}, body: {}", status, body);
+    }
+    assert!(status.is_success());
     // List rules
     let resp = client.get(&base_url).send().await.unwrap();
     assert!(resp.status().is_success());
@@ -86,23 +85,21 @@ async fn test_rest_api_add_list_delete_rule() {
     // Shutdown
     let _ = shutdown_tx.send(());
     let _ = server_handle.await;
-    // Cleanup iptables chains
-    cleanup_test_chains(&chain_prefix);
+    // Cleanup eBPF
+    cleanup_test_ebpf(&test_id);
     eprintln!("[debug] test_rest_api_add_list_delete_rule completed");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_rest_api_add_rule_invalid_data() {
     eprintln!("[debug] test_rest_api_add_rule_invalid_data running");
-    let (chains_path, rules_path, config_path, chain_prefix, port) = setup_test_paths();
+    let (rules_path, config_path, test_id, port) = setup_test_paths();
     let config_toml = TEST_CONFIG_TOML
         .replace("{rules_path}", &rules_path)
-        .replace("{chains_path}", &chains_path)
-        .replace("{chain_prefix}", &chain_prefix)
         .replace("{port}", &port.to_string());
     fs::write(&config_path, config_toml).unwrap();
     eprintln!("[debug] Config path: {}", config_path);
-    let engine = Engine::new(&config_path).unwrap();
+    let engine = Arc::new(Engine::new(&config_path).unwrap());
     engine.register_all_modules().unwrap();
     let rest_service = RestService::new(engine.clone());
     let (shutdown_tx, shutdown_rx_server) = tokio::sync::oneshot::channel::<()>();
@@ -132,7 +129,7 @@ async fn test_rest_api_add_rule_invalid_data() {
     let rule_req = json!({
         "name": "bad_rule",
         "direction": "sideways",
-        "action": "accept",
+        "action": "allow",
         "priority": 1
     });
     let resp = client.post(&base_url).json(&rule_req).send().await.unwrap();
@@ -140,7 +137,7 @@ async fn test_rest_api_add_rule_invalid_data() {
     // Add a rule with invalid action
     let rule_req = json!({
         "name": "bad_rule2",
-        "direction": "input",
+        "direction": "incoming",
         "action": "explode",
         "priority": 1
     });
@@ -149,23 +146,21 @@ async fn test_rest_api_add_rule_invalid_data() {
     // Shutdown
     let _ = shutdown_tx.send(());
     let _ = server_handle.await;
-    // Cleanup iptables chains
-    cleanup_test_chains(&chain_prefix);
+    // Cleanup eBPF
+    cleanup_test_ebpf(&test_id);
     eprintln!("[debug] test_rest_api_add_rule_invalid_data completed");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_rest_api_get_nonexistent_rule() {
     eprintln!("[debug] test_rest_api_get_nonexistent_rule running");
-    let (chains_path, rules_path, config_path, chain_prefix, port) = setup_test_paths();
+    let (rules_path, config_path, test_id, port) = setup_test_paths();
     let config_toml = TEST_CONFIG_TOML
         .replace("{rules_path}", &rules_path)
-        .replace("{chains_path}", &chains_path)
-        .replace("{chain_prefix}", &chain_prefix)
         .replace("{port}", &port.to_string());
     fs::write(&config_path, config_toml).unwrap();
     eprintln!("[debug] Config path: {}", config_path);
-    let engine = Engine::new(&config_path).unwrap();
+    let engine = Arc::new(Engine::new(&config_path).unwrap());
     engine.register_all_modules().unwrap();
     let rest_service = RestService::new(engine.clone());
     let (shutdown_tx, shutdown_rx_server) = tokio::sync::oneshot::channel::<()>();
@@ -201,23 +196,21 @@ async fn test_rest_api_get_nonexistent_rule() {
     // Shutdown
     let _ = shutdown_tx.send(());
     let _ = server_handle.await;
-    // Cleanup iptables chains
-    cleanup_test_chains(&chain_prefix);
+    // Cleanup eBPF
+    cleanup_test_ebpf(&test_id);
     eprintln!("[debug] test_rest_api_get_nonexistent_rule completed");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_rest_api_update_rule() {
     eprintln!("[debug] test_rest_api_update_rule running");
-    let (chains_path, rules_path, config_path, chain_prefix, port) = setup_test_paths();
+    let (rules_path, config_path, test_id, port) = setup_test_paths();
     let config_toml = TEST_CONFIG_TOML
         .replace("{rules_path}", &rules_path)
-        .replace("{chains_path}", &chains_path)
-        .replace("{chain_prefix}", &chain_prefix)
         .replace("{port}", &port.to_string());
     fs::write(&config_path, config_toml).unwrap();
     eprintln!("[debug] Config path: {}", config_path);
-    let engine = Engine::new(&config_path).unwrap();
+    let engine = Arc::new(Engine::new(&config_path).unwrap());
     engine.register_all_modules().unwrap();
     let rest_service = RestService::new(engine.clone());
     let (shutdown_tx, shutdown_rx_server) = tokio::sync::oneshot::channel::<()>();
@@ -246,8 +239,8 @@ async fn test_rest_api_update_rule() {
     // Add a rule
     let rule_req = json!({
         "name": "update_test_rule",
-        "direction": "input",
-        "action": "accept",
+        "direction": "incoming",
+        "action": "allow",
         "priority": 1
     });
     let resp = client.post(&base_url).json(&rule_req).send().await.unwrap();
@@ -264,7 +257,7 @@ async fn test_rest_api_update_rule() {
     // Update the rule
     let update_req = json!({
         "name": "update_test_rule",
-        "direction": "input",
+        "direction": "incoming",
         "action": "log",
         "priority": 1
     });
@@ -287,23 +280,21 @@ async fn test_rest_api_update_rule() {
     // Shutdown
     let _ = shutdown_tx.send(());
     let _ = server_handle.await;
-    // Cleanup iptables chains
-    cleanup_test_chains(&chain_prefix);
+    // Cleanup eBPF
+    cleanup_test_ebpf(&test_id);
     eprintln!("[debug] test_rest_api_update_rule completed");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_rest_api_reset_all_rules() {
     eprintln!("[debug] test_rest_api_reset_all_rules running");
-    let (chains_path, rules_path, config_path, chain_prefix, port) = setup_test_paths();
+    let (rules_path, config_path, test_id, port) = setup_test_paths();
     let config_toml = TEST_CONFIG_TOML
         .replace("{rules_path}", &rules_path)
-        .replace("{chains_path}", &chains_path)
-        .replace("{chain_prefix}", &chain_prefix)
         .replace("{port}", &port.to_string());
     fs::write(&config_path, config_toml).unwrap();
     eprintln!("[debug] Config path: {}", config_path);
-    let engine = Engine::new(&config_path).unwrap();
+    let engine = Arc::new(Engine::new(&config_path).unwrap());
     engine.register_all_modules().unwrap();
     let rest_service = RestService::new(engine.clone());
     let (shutdown_tx, shutdown_rx_server) = tokio::sync::oneshot::channel::<()>();
@@ -332,14 +323,14 @@ async fn test_rest_api_reset_all_rules() {
     // Add two rules
     let rule1 = json!({
         "name": "reset_test_rule1",
-        "direction": "input",
-        "action": "accept",
+        "direction": "incoming",
+        "action": "allow",
         "priority": 1
     });
     let rule2 = json!({
         "name": "reset_test_rule2",
-        "direction": "output",
-        "action": "accept",
+        "direction": "outgoing",
+        "action": "allow",
         "priority": 2
     });
     let resp = client.post(&base_url).json(&rule1).send().await.unwrap();
@@ -361,104 +352,140 @@ async fn test_rest_api_reset_all_rules() {
     // Shutdown
     let _ = shutdown_tx.send(());
     let _ = server_handle.await;
-    // Cleanup iptables chains
-    cleanup_test_chains(&chain_prefix);
+    // Cleanup eBPF
+    cleanup_test_ebpf(&test_id);
     eprintln!("[debug] test_rest_api_reset_all_rules completed");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_rest_api_create_custom_chain() {
-    eprintln!("[debug] test_rest_api_create_custom_chain running");
-    let (chains_path, rules_path, config_path, chain_prefix, port) = setup_test_paths();
+async fn test_rest_api_ebpf_rule_limits() {
+    eprintln!("[debug] test_rest_api_ebpf_rule_limits running");
+    let (rules_path, config_path, test_id, port) = setup_test_paths();
     let config_toml = TEST_CONFIG_TOML
         .replace("{rules_path}", &rules_path)
-        .replace("{chains_path}", &chains_path)
-        .replace("{chain_prefix}", &chain_prefix)
         .replace("{port}", &port.to_string());
-    std::fs::write(&config_path, config_toml).unwrap();
-    std::fs::write(&chains_path, b"[]").unwrap();
-
-    let engine = Engine::new(&config_path).unwrap();
+    fs::write(&config_path, config_toml).unwrap();
+    eprintln!("[debug] Config path: {}", config_path);
+    let engine = Arc::new(Engine::new(&config_path).unwrap());
+    engine.register_all_modules().unwrap();
     let rest_service = RestService::new(engine.clone());
-    let _server = tokio::spawn(async move {
-        rest_service
-            .run(Box::pin(async {
-                std::future::pending::<()>().await;
+    let (shutdown_tx, shutdown_rx_server) = tokio::sync::oneshot::channel::<()>();
+    let server_handle = tokio::spawn(async move {
+        if let Err(e) = rest_service
+            .run(Box::pin(async move {
+                shutdown_rx_server.await.ok();
             }))
             .await
-            .unwrap();
+        {
+            eprintln!("[server error] REST service failed: {e:?}");
+        }
     });
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-
     let client = reqwest::Client::new();
-    let url = format!("http://127.0.0.1:{}/api/filter/custom_chain", port);
-    let chain_name = format!("{}_MYCHAIN", chain_prefix);
-    let body = serde_json::json!({
-        "name": chain_name,
-        "reference_from": "INPUT"
-    });
-    let resp = client.post(&url).json(&body).send().await.unwrap();
-    assert!(resp.status().is_success());
-    eprintln!("[debug] Custom chain created via API");
-
-    // Wait for the server to update the chains file
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-    // Check that the chain is in the chains file
-    let chains_data = std::fs::read_to_string(&chains_path).unwrap();
-    assert!(chains_data.contains("MYCHAIN"));
-    eprintln!("[debug] Custom chain found in chains file");
+    let base_url = format!("http://127.0.0.1:{}/api/netshield/rules", port);
+    // Wait for server
+    let mut started = false;
+    for _ in 0..50 {
+        if client.get(&base_url).send().await.is_ok() {
+            started = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert!(started, "REST API did not start in time");
+    
+    // Test adding multiple rules (eBPF secure version supports 3 rules max)
+    for i in 1..=3 {
+        let rule_req = json!({
+            "name": format!("ebpf_test_rule_{}", i),
+            "direction": "incoming",
+            "action": "allow",
+            "priority": i
+        });
+        let resp = client.post(&base_url).json(&rule_req).send().await.unwrap();
+        assert!(resp.status().is_success(), "Failed to add rule {}", i);
+    }
+    
+    // List rules to verify all were added
+    let resp = client.get(&base_url).send().await.unwrap();
+    let rules: Vec<serde_json::Value> = resp.json().await.unwrap();
+    assert_eq!(rules.len(), 3, "Expected 3 rules in eBPF map");
+    
+    // Shutdown
+    let _ = shutdown_tx.send(());
+    let _ = server_handle.await;
+    // Cleanup eBPF
+    cleanup_test_ebpf(&test_id);
+    eprintln!("[debug] test_rest_api_ebpf_rule_limits completed");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_rest_api_delete_custom_chain() {
-    eprintln!("[debug] test_rest_api_delete_custom_chain running");
-    let (chains_path, rules_path, config_path, chain_prefix, port) = setup_test_paths();
+async fn test_rest_api_ebpf_ip_filtering() {
+    eprintln!("[debug] test_rest_api_ebpf_ip_filtering running");
+    let (rules_path, config_path, test_id, port) = setup_test_paths();
     let config_toml = TEST_CONFIG_TOML
         .replace("{rules_path}", &rules_path)
-        .replace("{chains_path}", &chains_path)
-        .replace("{chain_prefix}", &chain_prefix)
         .replace("{port}", &port.to_string());
-    std::fs::write(&config_path, config_toml).unwrap();
-    std::fs::write(&chains_path, b"[]").unwrap();
-
-    let engine = Engine::new(&config_path).unwrap();
+    fs::write(&config_path, config_toml).unwrap();
+    eprintln!("[debug] Config path: {}", config_path);
+    let engine = Arc::new(Engine::new(&config_path).unwrap());
+    engine.register_all_modules().unwrap();
     let rest_service = RestService::new(engine.clone());
-    let _server = tokio::spawn(async move {
-        rest_service
-            .run(Box::pin(async {
-                std::future::pending::<()>().await;
+    let (shutdown_tx, shutdown_rx_server) = tokio::sync::oneshot::channel::<()>();
+    let server_handle = tokio::spawn(async move {
+        if let Err(e) = rest_service
+            .run(Box::pin(async move {
+                shutdown_rx_server.await.ok();
             }))
             .await
-            .unwrap();
+        {
+            eprintln!("[server error] REST service failed: {e:?}");
+        }
     });
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-
     let client = reqwest::Client::new();
-    let url = format!("http://127.0.0.1:{}/api/filter/custom_chain", port);
-    let chain_name = format!("{}_MYCHAIN", chain_prefix);
-    let body = serde_json::json!({
-        "name": chain_name,
-        "reference_from": "INPUT"
+    let base_url = format!("http://127.0.0.1:{}/api/netshield/rules", port);
+    // Wait for server
+    let mut started = false;
+    for _ in 0..50 {
+        if client.get(&base_url).send().await.is_ok() {
+            started = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert!(started, "REST API did not start in time");
+    
+    // Add an IP-based blocking rule
+    let rule_req = json!({
+        "name": "block_test_ip",
+        "direction": "incoming",
+        "source_ip": "192.168.1.100",
+        "action": "block",
+        "priority": 1
     });
-    // First, create the chain via API
-    let resp = client.post(&url).json(&body).send().await.unwrap();
+    let resp = client.post(&base_url).json(&rule_req).send().await.unwrap();
     assert!(resp.status().is_success());
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-    let chains_data = std::fs::read_to_string(&chains_path).unwrap();
-    assert!(chains_data.contains("MYCHAIN"));
-    // Now, delete the custom chain via the API
-    let resp = client
-        .delete(&url)
-        .json(&serde_json::json!({ "name": chain_name, "reference_from": "INPUT" }))
-        .send()
-        .await
-        .unwrap();
+    
+    // Add an IP-based allow rule
+    let rule_req = json!({
+        "name": "allow_test_ip",
+        "direction": "incoming", 
+        "source_ip": "10.0.0.1",
+        "action": "allow",
+        "priority": 2
+    });
+    let resp = client.post(&base_url).json(&rule_req).send().await.unwrap();
     assert!(resp.status().is_success());
-    eprintln!("[debug] Custom chain deleted via API");
-    // Wait for the server to update the chains file
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-    // Check that the chain is no longer in the chains file
-    let chains_data = std::fs::read_to_string(&chains_path).unwrap();
-    assert!(!chains_data.contains("MYCHAIN"));
-    eprintln!("[debug] Custom chain removed from chains file");
+    
+    // List rules and verify they were added with correct IP addresses
+    let resp = client.get(&base_url).send().await.unwrap();
+    let rules: Vec<serde_json::Value> = resp.json().await.unwrap();
+    assert!(rules.iter().any(|r| r["name"] == "block_test_ip" && r["source_ip"] == "192.168.1.100"));
+    assert!(rules.iter().any(|r| r["name"] == "allow_test_ip" && r["source_ip"] == "10.0.0.1"));
+    
+    // Shutdown
+    let _ = shutdown_tx.send(());
+    let _ = server_handle.await;
+    // Cleanup eBPF
+    cleanup_test_ebpf(&test_id);
+    eprintln!("[debug] test_rest_api_ebpf_ip_filtering completed");
 }

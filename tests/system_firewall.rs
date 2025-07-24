@@ -1,6 +1,5 @@
 mod common;
-use crate::common::TEST_CONFIG_TOML;
-use crate::common::iptables::cleanup_test_chains;
+use crate::common::{TEST_CONFIG_TOML, cleanup_test_ebpf};
 use fortexa::core::engine::Engine;
 use fortexa::core::rules::{Action, Direction, Rule};
 use fortexa::services::rest::RestService;
@@ -8,7 +7,9 @@ use portpicker;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tempfile::NamedTempFile;
+use uuid::Uuid;
 
 #[tokio::test]
 async fn test_engine_end_to_end() {
@@ -16,43 +17,35 @@ async fn test_engine_end_to_end() {
     let rules_file = NamedTempFile::new().unwrap();
     let rules_path = rules_file.path().to_str().unwrap().to_string();
     std::fs::write(&rules_path, b"[]").unwrap();
-    let chains_file = NamedTempFile::new().unwrap();
-    let chains_path = chains_file.path().to_str().unwrap().to_string();
-    std::fs::write(&chains_path, b"[]").unwrap();
     let tmp_dir = env::temp_dir();
-    let config_path: PathBuf = tmp_dir.join(format!("test_config_{}.toml", uuid::Uuid::new_v4()));
-    let chain_prefix = format!(
-        "FORTEXA_TST_{}",
-        &uuid::Uuid::new_v4().simple().to_string()[..8]
-    );
+    let config_path: PathBuf = tmp_dir.join(format!("test_config_{}.toml", Uuid::new_v4()));
+    let test_id = format!("engine_test_{}", &Uuid::new_v4().simple().to_string()[..8]);
     let port = portpicker::pick_unused_port().expect("No ports free");
     let config_toml = TEST_CONFIG_TOML
         .replace("{rules_path}", &rules_path)
-        .replace("{chains_path}", &chains_path)
-        .replace("{chain_prefix}", &chain_prefix)
         .replace("{port}", &port.to_string());
     fs::write(&config_path, config_toml).unwrap();
     eprintln!("[test] config_path: {}", config_path.to_str().unwrap());
     eprintln!("[test] rules_path: {}", rules_path);
-    let engine = match Engine::new(config_path.to_str().unwrap()) {
+    let engine = Arc::new(match Engine::new(config_path.to_str().unwrap()) {
         Ok(e) => e,
         Err(e) => {
             eprintln!("[test error] Engine::new failed: {e:?}");
             panic!("Engine::new failed");
         }
-    };
+    });
     if let Err(e) = engine.register_all_modules() {
         eprintln!("[test error] register_all_modules failed: {e:?}");
         panic!("register_all_modules failed");
     }
-    let rule = Rule::new("test_rule".to_string(), Direction::Input, Action::Accept, 1);
-    let rule_id = engine.add_rule(rule.clone()).unwrap();
-    let rules = engine.list_rules().unwrap();
+    let rule = Rule::new("test_rule".to_string(), Direction::Incoming, Action::Allow, 1);
+    let rule_id = engine.add_rule("netshield", rule.clone()).unwrap();
+    let rules = engine.list_rules("netshield").unwrap();
     assert!(rules.iter().any(|r| r.id == rule_id));
-    engine.reset_rules().unwrap();
-    let rules = engine.list_rules().unwrap();
+    engine.reset_rules("netshield").unwrap();
+    let rules = engine.list_rules("netshield").unwrap();
     assert!(rules.is_empty());
-    cleanup_test_chains(&chain_prefix);
+    cleanup_test_ebpf(&test_id);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -61,25 +54,17 @@ async fn test_rest_api_end_to_end() {
     let rules_file = NamedTempFile::new().unwrap();
     let rules_path = rules_file.path().to_str().unwrap().to_string();
     std::fs::write(&rules_path, b"[]").unwrap();
-    let chains_file = NamedTempFile::new().unwrap();
-    let chains_path = chains_file.path().to_str().unwrap().to_string();
-    std::fs::write(&chains_path, b"[]").unwrap();
     let tmp_dir = env::temp_dir();
-    let config_path: PathBuf = tmp_dir.join(format!("test_config_{}.toml", uuid::Uuid::new_v4()));
-    let chain_prefix = format!(
-        "FORTEXA_TST_{}",
-        &uuid::Uuid::new_v4().simple().to_string()[..8]
-    );
+    let config_path: PathBuf = tmp_dir.join(format!("test_config_{}.toml", Uuid::new_v4()));
+    let test_id = format!("rest_test_{}", &Uuid::new_v4().simple().to_string()[..8]);
     let port = portpicker::pick_unused_port().expect("No ports free");
     let config_toml = TEST_CONFIG_TOML
         .replace("{rules_path}", &rules_path)
-        .replace("{chains_path}", &chains_path)
-        .replace("{chain_prefix}", &chain_prefix)
         .replace("{port}", &port.to_string());
     fs::write(&config_path, config_toml).unwrap();
     eprintln!("[test] Starting REST server on port {}", port);
     eprintln!("[test] About to spawn REST server task");
-    let engine = Engine::new(config_path.to_str().unwrap()).unwrap();
+    let engine = Arc::new(Engine::new(config_path.to_str().unwrap()).unwrap());
     engine.register_all_modules().unwrap();
     let rest_service = RestService::new(engine.clone());
     let (shutdown_tx, shutdown_rx_server) = tokio::sync::oneshot::channel::<()>();
@@ -132,5 +117,5 @@ async fn test_rest_api_end_to_end() {
     assert!(resp.status().is_success());
     let _ = shutdown_tx.send(());
     let _ = server_handle.await;
-    cleanup_test_chains(&chain_prefix);
+    cleanup_test_ebpf(&test_id);
 }
